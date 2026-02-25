@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --color-cream: #fff8f0;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  background: linear-gradient(135deg, #fff8f0 0%, #fef0f5 50%, #f0f0ff 100%);
+  background-attachment: fixed;
+  font-family: "Quicksand", sans-serif;
+}
+
+.text-gradient {
+  background: linear-gradient(135deg, #ff85a1, #c3a6ff);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.particle {
+  position: absolute;
+  border-radius: 50%;
+  pointer-events: none;
+  animation: float-particle 8s ease-in-out infinite;
+}
+
+@keyframes float-particle {
+  0%, 100% {
+    transform: translateY(0) translateX(0);
+    opacity: 0.3;
+  }
+  50% {
+    transform: translateY(-20px) translateX(10px);
+    opacity: 0.6;
+  }
+}
+
+.glass-card {
+  background: rgba(255, 255, 255, 0.7);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.3);
+  border-radius: 1.5rem;
+}
+
+.chat-input:focus {
+  outline: none;
+  box-shadow: 0 0 0 3px rgba(195, 166, 255, 0.3);
+}
+
+.safe-bottom {
+  padding-bottom: 1rem;
+}
