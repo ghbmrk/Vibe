@@ -14,6 +14,8 @@
 #include "skilltree.h"
 #include "ui.h"
 #include "rng.h"
+#include "gfx_data.h"
+#include <gb/gb.h>
 #include <string.h>
 
 /* ---- Module state ----------------------------------------- */
@@ -73,8 +75,7 @@ static uint16_t calc_damage(Creature *attacker, Creature *defender,
 }
 
 static void apply_skill(Creature *user, Creature *target,
-                        const SkillNode *skill,
-                        uint8_t *target_def_boost, uint8_t is_player) {
+                        const SkillNode *skill, uint8_t is_player) {
     uint16_t val;
 
     if (skill->category == SKILL_DEFEND) {
@@ -145,6 +146,22 @@ void battle_start(Creature *enemy) {
     /* Gather player skills */
     p_skill_count = skilltree_get_usable(&p_crea->tree, p_skills,
                                          MAX_ACTIVE_SKILLS);
+
+    /* Load creature sprites into background VRAM for battle display.
+     * Enemy front sprite at TILE_CREA_BASE, player at TILE_CREA_BASE+16. */
+    set_bkg_data(TILE_CREA_BASE, CREA_SPRITE_TILES,
+                 creature_sprites[e_crea->species]);
+    set_bkg_data(TILE_CREA_BASE + CREA_SPRITE_TILES, CREA_SPRITE_TILES,
+                 creature_sprites[p_crea->species]);
+
+    /* Set palette attributes for creature sprite areas.
+     * Map element type to BG palette:
+     * FLAME→5, AQUA→4, TERRA→3, VOLT→7, SHADOW→6, AETHER→7 */
+    {
+        static const uint8_t type_pal[] = { 5, 4, 3, 7, 6, 7 };
+        ui_set_palette_rect(14, 2, 4, 4, type_pal[e_crea->type]);
+        ui_set_palette_rect(2, 8, 4, 4, type_pal[p_crea->type]);
+    }
 }
 
 uint8_t battle_update(void) {
@@ -187,7 +204,7 @@ uint8_t battle_update(void) {
     /* ---- Skill selection ----------------------------------- */
     case BSTATE_SELECT_SKILL:
         if (PRESSED(J_UP)   && skill_sel > 0) skill_sel--;
-        if (PRESSED(J_DOWN) && skill_sel < p_skill_count - 1) skill_sel++;
+        if (PRESSED(J_DOWN) && p_skill_count > 0 && skill_sel < p_skill_count - 1) skill_sel++;
 
         if (PRESSED(J_B)) {
             bstate = BSTATE_PLAYER_MENU;
@@ -206,7 +223,7 @@ uint8_t battle_update(void) {
     case BSTATE_PLAYER_ACT: {
         const SkillNode *sk = &p_crea->tree.nodes[p_skills[skill_sel]];
         p_crea->sp -= sk->cost;
-        apply_skill(p_crea, e_crea, sk, &e_def_boost, 1);
+        apply_skill(p_crea, e_crea, sk, 1);
         msg_timer   = 30;
         player_acted = 1;
         bstate = BSTATE_CHECK;
@@ -218,7 +235,7 @@ uint8_t battle_update(void) {
         uint8_t eidx = enemy_pick_skill();
         const SkillNode *sk = &e_crea->tree.nodes[eidx];
         if (e_crea->sp >= sk->cost) e_crea->sp -= sk->cost;
-        apply_skill(e_crea, p_crea, sk, &p_def_boost, 0);
+        apply_skill(e_crea, p_crea, sk, 0);
         msg_timer   = 30;
         player_acted = 0;
         bstate = BSTATE_CHECK;
@@ -243,13 +260,13 @@ uint8_t battle_update(void) {
     /* ---- Victory ------------------------------------------- */
     case BSTATE_VICTORY:
         if (msg_timer) { msg_timer--; break; }
-        if (msg_timer == 0 && battle_result == BATTLE_RESULT_NONE) {
-            /* Award EXP: base 20 + enemy_level * 4 */
+        if (battle_result == BATTLE_RESULT_NONE) {
             creature_gain_exp(p_crea,
                               20u + (uint16_t)e_crea->level * 4u);
             battles_won++;
             battle_result = BATTLE_RESULT_WIN;
             msg_timer = 60;
+            break;
         }
         if (PRESSED(J_A) || PRESSED(J_B)) {
             bstate = BSTATE_DONE;
@@ -262,9 +279,9 @@ uint8_t battle_update(void) {
         if (battle_result == BATTLE_RESULT_NONE) {
             battle_result = BATTLE_RESULT_LOSE;
             msg_timer = 60;
+            break;
         }
         if (PRESSED(J_A) || PRESSED(J_B)) {
-            /* Revive lead creature with 1 HP (simple mercy mechanic) */
             p_crea->hp = 1;
             bstate = BSTATE_DONE;
         }
@@ -274,7 +291,6 @@ uint8_t battle_update(void) {
     case BSTATE_CATCH_TRY:
         if (msg_timer) { msg_timer--; break; }
         if (battle_result == BATTLE_RESULT_NONE) {
-            /* Catch chance: (catchRate * (maxHP * 2 - curHP)) / (maxHP * 2) */
             uint16_t chance;
             chance = (uint16_t)species_table[e_crea->species].catch_rate;
             chance = chance * (e_crea->max_hp * 2u - e_crea->hp);
@@ -282,18 +298,16 @@ uint8_t battle_update(void) {
             if (chance < 10) chance = 10;
 
             if (rng_range(0, 255) < (uint8_t)chance && party_count < MAX_PARTY) {
-                /* Caught! */
                 memcpy(&party[party_count], e_crea, sizeof(Creature));
                 party_count++;
                 total_catches++;
                 battle_result = BATTLE_RESULT_CATCH;
+                msg_timer = 60;
             } else {
-                /* Failed – enemy gets a free turn */
                 msg_timer = 30;
                 bstate = BSTATE_ENEMY_ACT;
-                break;
             }
-            msg_timer = 60;
+            break;
         }
         if (PRESSED(J_A) || PRESSED(J_B)) {
             bstate = BSTATE_DONE;
@@ -304,16 +318,14 @@ uint8_t battle_update(void) {
     case BSTATE_RUN:
         if (msg_timer) { msg_timer--; break; }
         if (battle_result == BATTLE_RESULT_NONE) {
-            /* Run chance based on speed */
             if (p_crea->spd >= e_crea->spd || rng_range(0, 3) > 0) {
                 battle_result = BATTLE_RESULT_RUN;
+                msg_timer = 30;
             } else {
-                /* Failed – enemy gets a free turn */
                 msg_timer = 30;
                 bstate = BSTATE_ENEMY_ACT;
-                break;
             }
-            msg_timer = 30;
+            break;
         }
         if (PRESSED(J_A) || PRESSED(J_B)) {
             bstate = BSTATE_DONE;
@@ -358,6 +370,37 @@ void battle_render(void) {
     ui_print(1, 2, type_names[e_crea->type]);
     ui_print(1, 9, type_names[p_crea->type]);
 
+    /* Draw creature sprites as 4x4 background tiles.
+     * Enemy: top-right area (cols 14-17, rows 2-5)
+     * Player: mid-left area (cols 2-5, rows 6-9) -- overlaps info, kept compact */
+    {
+        uint8_t row_tiles[4];
+        uint8_t r;
+        /* Enemy sprite */
+        for (r = 0; r < 4; r++) {
+            row_tiles[0] = TILE_CREA_BASE + r * 4;
+            row_tiles[1] = TILE_CREA_BASE + r * 4 + 1;
+            row_tiles[2] = TILE_CREA_BASE + r * 4 + 2;
+            row_tiles[3] = TILE_CREA_BASE + r * 4 + 3;
+            set_bkg_tiles(14, 2 + r, 4, 1, row_tiles);
+        }
+        /* Player sprite */
+        for (r = 0; r < 4; r++) {
+            row_tiles[0] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4;
+            row_tiles[1] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 1;
+            row_tiles[2] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 2;
+            row_tiles[3] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 3;
+            set_bkg_tiles(2, 8 + r, 4, 1, row_tiles);
+        }
+    }
+
+    /* Re-apply creature palette attributes (cleared by ui_clear) */
+    {
+        static const uint8_t type_pal[] = { 5, 4, 3, 7, 6, 7 };
+        ui_set_palette_rect(14, 2, 4, 4, type_pal[e_crea->type]);
+        ui_set_palette_rect(2, 8, 4, 4, type_pal[p_crea->type]);
+    }
+
     /* ---- State-dependent lower section -------------------- */
     switch (bstate) {
 
@@ -373,19 +416,28 @@ void battle_render(void) {
                  ">");
         break;
 
-    case BSTATE_SELECT_SKILL:
+    case BSTATE_SELECT_SKILL: {
+        uint8_t scroll_top = 0;
         ui_draw_box(0, 10, 20, 8);
         ui_print(1, 10, "PICK SKILL");
-        for (i = 0; i < p_skill_count && i < 4; i++) {
-            const SkillNode *sk = &p_crea->tree.nodes[p_skills[i]];
-            skilltree_skill_name(buf, sk->element, sk->category,
-                                 p_skills[i] & 3);
-            ui_print(3, 12 + i, buf);
-            ui_print_num(15, 12 + i, sk->power);
-            ui_print(17, 12 + i, skilltree_cat_tag(sk->category));
+        if (skill_sel >= 4) scroll_top = skill_sel - 3;
+        for (i = 0; i < 4; i++) {
+            uint8_t si = scroll_top + i;
+            if (si >= p_skill_count) break;
+            {
+                const SkillNode *sk = &p_crea->tree.nodes[p_skills[si]];
+                skilltree_skill_name(buf, sk->element, sk->category,
+                                     p_skills[si] & 3);
+                ui_print(3, 12 + i, buf);
+                ui_print_num(15, 12 + i, sk->power);
+                ui_print(17, 12 + i, skilltree_cat_tag(sk->category));
+            }
         }
-        ui_print(1, 12 + skill_sel, ">");
+        if (p_skill_count > 0) {
+            ui_print(1, 12 + (skill_sel - scroll_top), ">");
+        }
         break;
+    }
 
     case BSTATE_VICTORY:
         ui_draw_box(0, 12, 20, 6);

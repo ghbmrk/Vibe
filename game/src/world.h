@@ -22,4 +22,7 @@ void world_hide_player(void);
 /* Show the player sprite (call when re-entering overworld). */
 void world_show_player(void);
 
+/* Mark palette attributes as needing refresh (call after leaving menus/battle). */
+void world_mark_dirty(void);
+
 #endif /* WORLD_H */

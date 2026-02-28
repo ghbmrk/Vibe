@@ -40,4 +40,8 @@ void ui_draw_game_menu(uint8_t sel);
 /* Draw party summary screen.  `sel` = highlighted slot. */
 void ui_draw_party(uint8_t sel);
 
+/* Set GBC background palette attributes for a rectangular region.
+ * Writes to VRAM bank 1.  `pal` is the palette index (0-7). */
+void ui_set_palette_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t pal);
+
 #endif /* UI_H */

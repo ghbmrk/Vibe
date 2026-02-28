@@ -165,13 +165,47 @@ static uint8_t tile_is_solid(uint8_t tile) {
 /* ---- State ------------------------------------------------ */
 
 static uint8_t move_cooldown;   /* frames until next step allowed */
+static uint8_t pal_dirty;      /* 1 = palette attributes need refresh */
 #define MOVE_DELAY 6
 
 /* ---- Public functions ------------------------------------- */
 
+/* Assign GBC palette attributes to each tile based on tile type */
+static void world_set_palettes(void) {
+    uint8_t x, y, tile, pal;
+    uint8_t pal_row[MAP_W];
+
+    VBK_REG = 1;
+    for (y = 0; y < MAP_H; y++) {
+        for (x = 0; x < MAP_W; x++) {
+            tile = maps[current_map][y][x];
+            switch (tile) {
+                case TILE_GRASS:
+                case TILE_FLOWER:     pal = 1; break;
+                case TILE_TALLGRASS:  pal = 2; break;
+                case TILE_PATH:
+                case TILE_DOOR:
+                case TILE_SIGN:
+                case TILE_ROOF:
+                case TILE_WALL:       pal = 3; break;
+                case TILE_WATER:      pal = 4; break;
+                case TILE_TREE_TL:
+                case TILE_TREE_TR:
+                case TILE_TREE_BL:
+                case TILE_TREE_BR:    pal = 2; break;
+                default:              pal = 0; break;
+            }
+            pal_row[x] = pal;
+        }
+        set_bkg_tiles(0, y, MAP_W, 1, pal_row);
+    }
+    VBK_REG = 0;
+}
+
 void world_load(uint8_t map_id) {
     current_map = map_id;
     move_cooldown = 0;
+    pal_dirty = 1;
 }
 
 uint8_t world_update(void) {
@@ -231,6 +265,12 @@ void world_render(void) {
     set_bkg_tiles(0, 0, MAP_W, MAP_H,
                   (const uint8_t *)maps[current_map]);
 
+    /* Apply palette attributes once after load or state transition */
+    if (pal_dirty) {
+        world_set_palettes();
+        pal_dirty = 0;
+    }
+
     /* Position player sprite (OAM).
      * OAM coordinates are offset by (8, 16) on Game Boy. */
     move_sprite(SPR_PLAYER_0, player_x * 8u + 8u,      player_y * 8u + 16u);
@@ -248,4 +288,8 @@ void world_hide_player(void) {
 
 void world_show_player(void) {
     /* world_render will reposition them */
+}
+
+void world_mark_dirty(void) {
+    pal_dirty = 1;
 }

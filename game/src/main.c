@@ -50,6 +50,8 @@ static uint8_t menu_sel;
 static uint8_t st_creature_idx;   /* creature whose tree is shown */
 static uint8_t st_node_sel;       /* selected skill-tree node     */
 static uint8_t prev_state;        /* state to return to           */
+static uint8_t screen_dirty;      /* 1 = screen needs full redraw */
+static uint8_t last_game_state;   /* tracks state changes         */
 
 /* Scratch creature for wild encounters */
 static Creature wild;
@@ -147,6 +149,8 @@ void main(void) {
     menu_sel   = 0;
     st_creature_idx = 0;
     st_node_sel = 0;
+    screen_dirty = 1;
+    last_game_state = 0xFF;
 
     /* ======================================================= */
     /*  MAIN LOOP                                               */
@@ -157,11 +161,20 @@ void main(void) {
         jpad_prev = jpad;
         jpad = joypad();
 
+        /* Detect state changes for redraw */
+        if (game_state != last_game_state) {
+            screen_dirty = 1;
+            last_game_state = game_state;
+        }
+
         switch (game_state) {
 
         /* ---- TITLE SCREEN --------------------------------- */
         case STATE_TITLE:
-            ui_draw_title();
+            if (screen_dirty) {
+                ui_draw_title();
+                screen_dirty = 0;
+            }
 
             if (PRESSED(J_START)) {
                 /* Try to load a save; if none, go to starter select */
@@ -177,10 +190,13 @@ void main(void) {
 
         /* ---- STARTER SELECTION ----------------------------- */
         case STATE_STARTER:
-            ui_draw_starter(menu_sel);
+            if (screen_dirty) {
+                ui_draw_starter(menu_sel);
+                screen_dirty = 0;
+            }
 
-            if (PRESSED(J_UP)   && menu_sel > 0) menu_sel--;
-            if (PRESSED(J_DOWN) && menu_sel < 2) menu_sel++;
+            if (PRESSED(J_UP)   && menu_sel > 0) { menu_sel--; screen_dirty = 1; }
+            if (PRESSED(J_DOWN) && menu_sel < 2) { menu_sel++; screen_dirty = 1; }
 
             if (PRESSED(J_A)) {
                 /* Create starter creature at level 5 */
@@ -233,6 +249,7 @@ void main(void) {
              * checking if game_state was changed by battle_update. */
             if (battle_update()) {
                 /* Battle over – return to overworld */
+                world_mark_dirty();
                 game_state = STATE_OVERWORLD;
                 break;
             }
@@ -250,12 +267,16 @@ void main(void) {
 
         /* ---- GAME MENU ------------------------------------- */
         case STATE_MENU:
-            ui_draw_game_menu(menu_sel);
+            if (screen_dirty) {
+                ui_draw_game_menu(menu_sel);
+                screen_dirty = 0;
+            }
 
-            if (PRESSED(J_UP)   && menu_sel > 0) menu_sel--;
-            if (PRESSED(J_DOWN) && menu_sel < 3) menu_sel++;
+            if (PRESSED(J_UP)   && menu_sel > 0) { menu_sel--; screen_dirty = 1; }
+            if (PRESSED(J_DOWN) && menu_sel < 3) { menu_sel++; screen_dirty = 1; }
 
             if (PRESSED(J_B)) {
+                world_mark_dirty();
                 game_state = STATE_OVERWORLD;
                 break;
             }
@@ -278,7 +299,7 @@ void main(void) {
                                     ui_draw_party(menu_sel);
                                 }
                                 if (PRESSED(J_DOWN) &&
-                                    menu_sel < party_count - 1) {
+                                    party_count > 0 && menu_sel < party_count - 1) {
                                     menu_sel++;
                                     ui_draw_party(menu_sel);
                                 }
@@ -313,8 +334,10 @@ void main(void) {
                             uint8_t t;
                             for (t = 0; t < 60; t++) wait_vbl_done();
                         }
+                        screen_dirty = 1;
                         break;
                     case 3: /* CLOSE */
+                        world_mark_dirty();
                         game_state = STATE_OVERWORLD;
                         break;
                 }
@@ -325,13 +348,21 @@ void main(void) {
         case STATE_SKILLTREE: {
             Creature *c = &party[st_creature_idx];
 
-            ui_draw_skill_tree(c, st_node_sel);
+            if (screen_dirty) {
+                ui_draw_skill_tree(c, st_node_sel);
+                screen_dirty = 0;
+            }
 
             /* Navigate nodes */
-            if (PRESSED(J_UP)   && st_node_sel > 0)
+            if (PRESSED(J_UP) && st_node_sel > 0) {
                 st_node_sel--;
-            if (PRESSED(J_DOWN) && st_node_sel < c->tree.count - 1)
+                screen_dirty = 1;
+            }
+            if (PRESSED(J_DOWN) && c->tree.count > 0 &&
+                st_node_sel < c->tree.count - 1) {
                 st_node_sel++;
+                screen_dirty = 1;
+            }
 
             /* Unlock node */
             if (PRESSED(J_A)) {
@@ -339,6 +370,7 @@ void main(void) {
                     skilltree_can_unlock(&c->tree, st_node_sel, c->level)) {
                     skilltree_unlock(&c->tree, st_node_sel);
                     c->skill_pts--;
+                    screen_dirty = 1;
                 }
             }
 

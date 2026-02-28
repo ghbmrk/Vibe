@@ -66,6 +66,13 @@ void ui_clear(void) {
     for (y = 0; y < MAP_H; y++) {
         set_bkg_tiles(0, y, MAP_W, 1, row);
     }
+    /* Reset palette attributes to palette 0 */
+    memset(row, 0, MAP_W);
+    VBK_REG = 1;
+    for (y = 0; y < MAP_H; y++) {
+        set_bkg_tiles(0, y, MAP_W, 1, row);
+    }
+    VBK_REG = 0;
 }
 
 /* ---- Text printing ---------------------------------------- */
@@ -85,23 +92,18 @@ void ui_print(uint8_t x, uint8_t y, const char *str) {
 
 void ui_print_num(uint8_t x, uint8_t y, uint16_t num) {
     char buf[6];
-    int8_t i = 4;
+    uint8_t i = 5;
 
     buf[5] = '\0';
     if (num == 0) {
-        buf[4] = '0';
-        i = 3;
+        buf[--i] = '0';
     } else {
-        while (num > 0 && i >= 0) {
-            buf[i + 1] = '0'; /* will be overwritten below */
-            i--;
-            /* manual divmod for SDCC friendliness */
-            buf[i + 2] = '0' + (char)(num % 10u);
+        while (num > 0 && i > 0) {
+            buf[--i] = '0' + (char)(num % 10u);
             num /= 10u;
         }
-        i++;
     }
-    ui_print(x, y, &buf[i + 1]);
+    ui_print(x, y, &buf[i]);
 }
 
 /* ---- Box drawing ------------------------------------------ */
@@ -340,4 +342,20 @@ void ui_draw_party(uint8_t sel) {
     }
 
     ui_print(3, 15, "B:BACK  A:SKILLS");
+}
+
+/* ---- GBC palette attributes ------------------------------- */
+
+void ui_set_palette_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t pal) {
+    uint8_t row[MAP_W];
+    uint8_t iy;
+
+    if (w > MAP_W) w = MAP_W;
+    memset(row, pal & 0x07u, w);
+
+    VBK_REG = 1;
+    for (iy = 0; iy < h; iy++) {
+        set_bkg_tiles(x, y + iy, w, 1, row);
+    }
+    VBK_REG = 0;
 }
