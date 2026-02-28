@@ -52,6 +52,11 @@ static uint8_t  e_last_stand;
 static uint8_t  last_was_crit;   /* for display in ACT state */
 static uint8_t  cant_flee_timer; /* frames to show "CAN'T FLEE!" */
 
+/* Action feedback for rendering during CHECK state */
+static uint8_t  last_actor;      /* 0 = player acted, 1 = enemy acted */
+static uint16_t last_dmg;        /* damage dealt last action */
+static uint8_t  last_action;     /* skill category of last action */
+
 /* ---- Keystone helper -------------------------------------- */
 
 static uint8_t has_keystone(const Creature *c, uint8_t ntype) {
@@ -319,6 +324,9 @@ void battle_start(Creature *enemy, uint8_t boss_flag) {
     e_def_boost  = 0;
     last_was_crit = 0;
     cant_flee_timer = 0;
+    last_actor = 0;
+    last_dmg = 0;
+    last_action = SKILL_ATTACK;
     battle_result = BATTLE_RESULT_NONE;
 
     /* LAST_STAND: available once per battle */
@@ -414,13 +422,17 @@ uint8_t battle_update(void) {
     /* ---- Player acts --------------------------------------- */
     case BSTATE_PLAYER_ACT: {
         const SkillNode *sk = &p_crea->tree.nodes[p_skills[skill_sel]];
+        uint16_t before_hp = e_crea->hp;
         p_crea->sp -= sk->cost;
         apply_skill(p_crea, e_crea, sk, 1);
         /* MULTICAST: 30% chance to act again */
         if (NODE_NTYPE(*sk) == NTYPE_MULTICAST && rng_range(0, 99) < 30) {
             apply_skill(p_crea, e_crea, sk, 1);
         }
-        msg_timer   = 30;
+        last_actor = 0;
+        last_action = sk->category;
+        last_dmg = (before_hp > e_crea->hp) ? before_hp - e_crea->hp : 0;
+        msg_timer   = 45;
         bstate = BSTATE_CHECK;
         break;
     }
@@ -429,12 +441,16 @@ uint8_t battle_update(void) {
     case BSTATE_ENEMY_ACT: {
         uint8_t eidx = enemy_pick_skill();
         const SkillNode *sk = &e_crea->tree.nodes[eidx];
+        uint16_t before_hp = p_crea->hp;
         if (e_crea->sp >= sk->cost) e_crea->sp -= sk->cost;
         apply_skill(e_crea, p_crea, sk, 0);
         if (NODE_NTYPE(*sk) == NTYPE_MULTICAST && rng_range(0, 99) < 30) {
             apply_skill(e_crea, p_crea, sk, 0);
         }
-        msg_timer   = 30;
+        last_actor = 1;
+        last_action = sk->category;
+        last_dmg = (before_hp > p_crea->hp) ? before_hp - p_crea->hp : 0;
+        msg_timer   = 45;
         bstate = BSTATE_CHECK;
         break;
     }
@@ -737,15 +753,24 @@ void battle_render(void) {
         break;
 
     default:
-        /* INIT / CHECK / ACT states: show a simple message box */
+        /* INIT / CHECK / ACT states: show a message box with feedback */
         ui_draw_box(0, 14, 20, 4);
-        if (bstate == BSTATE_PLAYER_ACT || bstate == BSTATE_ENEMY_ACT) {
-            ui_print(2, 15, bstate == BSTATE_PLAYER_ACT ?
-                     p_crea->name : e_crea->name);
-            ui_print(11, 15, "ATTACKS!");
-        }
-        if (last_was_crit) {
-            ui_print(2, 16, "CRITICAL!");
+        if (bstate == BSTATE_CHECK) {
+            ui_print(2, 15, last_actor == 0 ? p_crea->name : e_crea->name);
+            if (last_action == SKILL_SUPPORT) {
+                ui_print(11, 15, "HEALS!");
+            } else if (last_action == SKILL_DEFEND) {
+                ui_print(11, 15, "GUARDS!");
+            } else {
+                ui_print(11, 15, "ATTACKS!");
+            }
+            if (last_dmg > 0) {
+                ui_print(2, 16, "DMG ");
+                ui_print_num(6, 16, last_dmg);
+            }
+            if (last_was_crit) {
+                ui_print(11, 16, "CRITICAL!");
+            }
         }
         break;
     }
