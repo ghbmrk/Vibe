@@ -41,3 +41,4 @@ next-env.d.ts
 *.sym
 *.adb
 *.lk
+*.cdb
