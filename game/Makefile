@@ -37,7 +37,7 @@ SRCS = src/main.c \
 
 # ---- Targets ------------------------------------------------
 
-.PHONY: all clean
+.PHONY: all clean serve test watch
 
 all: $(TARGET)
 
@@ -47,3 +47,22 @@ $(TARGET): $(SRCS)
 clean:
 	rm -f $(TARGET) *.map *.noi *.lst *.sym *.adb *.ihx *.lk
 	rm -f src/*.asm src/*.lst src/*.sym src/*.adb
+
+# Start dev server for mobile testing (phone on same WiFi)
+serve:
+	./serve.sh
+
+# Build + serve in one command
+test: all serve
+
+# Auto-rebuild on source changes (requires fswatch or inotifywait)
+watch:
+	@echo "Watching src/ for changes... (Ctrl+C to stop)"
+	@if command -v fswatch >/dev/null 2>&1; then \
+		fswatch -o src/ | while read; do echo "--- Rebuilding ---"; $(MAKE) all; done; \
+	elif command -v inotifywait >/dev/null 2>&1; then \
+		while inotifywait -qre modify src/; do echo "--- Rebuilding ---"; $(MAKE) all; done; \
+	else \
+		echo "Install fswatch (macOS: brew install fswatch) or inotifywait (Linux: apt install inotify-tools)"; \
+		exit 1; \
+	fi
