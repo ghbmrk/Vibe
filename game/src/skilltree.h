@@ -1,38 +1,32 @@
+/* skilltree.h - Procedural skill tree (pick 1 of 3) */
 #ifndef SKILLTREE_H
 #define SKILLTREE_H
 
 #include "common.h"
 
-/* Procedurally generate a skill tree for the given element type + seed. */
-void skilltree_generate(SkillTree *tree, uint8_t creature_type, uint16_t seed);
+/* Skill option displayed during level-up */
+typedef struct {
+    uint8_t id;          /* skill ID (CSKILL_ or MSKILL_) */
+    uint8_t is_move;     /* 1 if this teaches a new move (creature only) */
+    uint8_t move_id;     /* move to learn if is_move */
+} SkillOption;
 
-/* Can a node be unlocked?  Checks parent-unlocked, level requirement, etc. */
-uint8_t skilltree_can_unlock(const SkillTree *tree, uint8_t node_idx,
-                             uint8_t creature_level);
+/* Generate 3 skill options for character level-up */
+void skilltree_gen_char_options(SkillOption opts[3]);
 
-/* Mark a node as unlocked. */
-void skilltree_unlock(SkillTree *tree, uint8_t node_idx);
+/* Generate 3 skill options for creature level-up */
+void skilltree_gen_creature_options(SkillOption opts[3], const Creature *c);
 
-/* Gather indices of unlocked combat-usable skills into `out`.
- * Returns number written (capped at `max`). */
-uint8_t skilltree_get_usable(const SkillTree *tree, uint8_t *out, uint8_t max);
+/* Apply chosen character skill */
+void skilltree_apply_char_skill(Character *ch, const SkillOption *opt);
 
-/* Get a display name for a skill (writes into buf, max SKILL_NAME_LEN). */
-void skilltree_skill_name(char *buf, uint8_t element, uint8_t category,
-                          uint8_t variant);
+/* Apply chosen creature skill */
+void skilltree_apply_creature_skill(Creature *c, const SkillOption *opt);
 
-/* Category short tag for display: "ATK" "DEF" "SUP" "SPC" */
-const char *skilltree_cat_tag(uint8_t category);
+/* Get description string for a character skill */
+const char *skilltree_char_desc(uint8_t skill_id);
 
-/* Human-readable keystone type name (short, for UI). */
-const char *skilltree_ntype_name(uint8_t ntype);
+/* Get description string for a creature skill/move option */
+const char *skilltree_creature_desc(const SkillOption *opt);
 
-/* Short effect description for a keystone type. */
-const char *skilltree_ntype_desc(uint8_t ntype);
-
-/* Auto-unlock nodes for a wild creature.
- * Simulates skill point spending up to `level` using `seed` for choices.
- * Call after skilltree_generate and before recalculating stats. */
-void skilltree_auto_unlock(SkillTree *tree, uint8_t level, uint16_t seed);
-
-#endif /* SKILLTREE_H */
+#endif

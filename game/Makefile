@@ -1,14 +1,14 @@
 # ============================================================
-# Creature Collector - Game Boy Color game for ModRetro Chromatic
+# IMPERIAL HUNT - Game Boy Color creature collector RPG
 # Built with GBDK-2020 (https://github.com/gbdk-2020/gbdk-2020)
 # ============================================================
 
 # GBDK installation path - override with: make GBDK=/your/path
-GBDK    ?= /opt/gbdk-2020
+GBDK    ?= /opt/gbdk
 CC       = $(GBDK)/bin/lcc
 
 # Output ROM
-TARGET   = CreatureCollector.gbc
+TARGET   = ImperialHunt.gbc
 
 # Compiler / linker flags
 #   -msm83:gb         Target Game Boy / Game Boy Color (SM83 CPU)
@@ -29,15 +29,16 @@ CFLAGS   = -msm83:gb \
 # Source files (order matters for GBDK linking)
 SRCS = src/main.c \
        src/rng.c \
-       src/creature.c \
-       src/skilltree.c \
-       src/sprite_gen.c \
-       src/battle.c \
-       src/zone.c \
-       src/world.c \
+       src/gfx_data.c \
        src/ui.c \
-       src/save.c \
-       src/gfx_data.c
+       src/creature.c \
+       src/character.c \
+       src/skilltree.c \
+       src/battle.c \
+       src/world.c \
+       src/zone.c \
+       src/shop.c \
+       src/save.c
 
 # ---- Targets ------------------------------------------------
 

@@ -1,24 +1,29 @@
+/* battle.h - Turn-based battle system */
 #ifndef BATTLE_H
 #define BATTLE_H
 
 #include "common.h"
 
-/* Start a battle against a creature. boss_flag=1 prevents fleeing. */
-void battle_start(Creature *enemy, uint8_t boss_flag);
+/* Battle result codes */
+#define BATTLE_WIN      0
+#define BATTLE_LOSE     1
+#define BATTLE_RUN      2
 
-/* Per-frame update – drives the battle state machine.
- * Returns non-zero when the battle is finished. */
-uint8_t battle_update(void);
+/* Post-battle choice */
+#define CHOICE_EAT      0
+#define CHOICE_FEED     1
+#define CHOICE_CATCH    2
 
-/* Render the current battle frame to the background. */
-void battle_render(void);
+/* Initialize battle state with an enemy creature */
+void battle_init(Creature *enemy);
 
-/* Result of the last completed battle */
-#define BATTLE_RESULT_NONE   0
-#define BATTLE_RESULT_WIN    1
-#define BATTLE_RESULT_LOSE   2
-#define BATTLE_RESULT_CATCH  3
-#define BATTLE_RESULT_RUN    4
-extern uint8_t battle_result;
+/* Run the full battle loop. Returns BATTLE_WIN/LOSE/RUN. */
+uint8_t battle_run(void);
 
-#endif /* BATTLE_H */
+/* Draw the battle screen layout */
+void battle_draw_scene(const Creature *player_c, const Creature *enemy_c);
+
+/* Show post-battle choice menu. Returns CHOICE_EAT/FEED/CATCH. */
+uint8_t battle_post_choice(const Creature *enemy);
+
+#endif

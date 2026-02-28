@@ -1,777 +1,537 @@
-/*  battle.c  –  Turn-based creature battle system.
- *
- *  Battle flow:
- *    1. Player picks action  (FIGHT / CATCH / SWAP / RUN)
- *    2. If FIGHT → choose a skill from unlocked nodes
- *    3. Speed comparison decides who goes first (SWIFT overrides)
- *    4. Both sides act; damage includes crits + keystone effects
- *    5. Check for KO / catch / flee
- *    6. End of turn: SP regen, REGEN keystone
- *    7. Victory → award EXP, return to overworld
- */
-
+/* battle.c - Turn-based battle system */
 #include "battle.h"
 #include "creature.h"
-#include "skilltree.h"
-#include "sprite_gen.h"
+#include "character.h"
 #include "ui.h"
-#include "rng.h"
 #include "gfx_data.h"
-#include <gb/gb.h>
-#include <string.h>
+#include "rng.h"
 
-/* ---- Module state ----------------------------------------- */
+/* ── Local battle state ────────────────────────────────────── */
+static Creature enemy;
+static uint8_t battle_cry_turns;  /* remaining turns for Battle Cry */
 
-uint8_t battle_result;
+/* ── Draw creature sprites on BG ───────────────────────────── */
+static void draw_creature_sprite(uint8_t bx, uint8_t by,
+                                 uint8_t base_tile, uint8_t pal) {
+    uint8_t x, y;
+    uint8_t tiles[4];
+    uint8_t attrs[4];
 
-static uint8_t  bstate;
-static uint8_t  menu_sel;
-static uint8_t  skill_sel;
-static uint8_t  swap_sel;
-static uint8_t  msg_timer;
-
-static Creature *p_crea;         /* active party creature    */
-static Creature *e_crea;         /* enemy creature (external)*/
-
-/* Skill indices available for the player creature */
-static uint8_t  p_skills[MAX_ACTIVE_SKILLS];
-static uint8_t  p_skill_count;
-
-/* Defence boost flags */
-static uint8_t  p_def_boost;
-static uint8_t  e_def_boost;
-
-/* Turn flow */
-static uint8_t  player_first;    /* 1 = player acts before enemy */
-static uint8_t  turn_phase;      /* 0 = first act done, 1 = second */
-
-/* Battle flags */
-static uint8_t  is_boss;         /* 1 = boss battle, can't flee */
-static uint8_t  p_last_stand;    /* 1 = LAST_STAND still available */
-static uint8_t  e_last_stand;
-static uint8_t  last_was_crit;   /* for display in ACT state */
-static uint8_t  cant_flee_timer; /* frames to show "CAN'T FLEE!" */
-
-/* Action feedback for rendering during CHECK state */
-static uint8_t  last_actor;      /* 0 = player acted, 1 = enemy acted */
-static uint16_t last_dmg;        /* damage dealt last action */
-static uint8_t  last_action;     /* skill category of last action */
-
-/* ---- Keystone helper -------------------------------------- */
-
-static uint8_t has_keystone(const Creature *c, uint8_t ntype) {
-    uint8_t i;
-    for (i = 0; i < c->tree.count; i++) {
-        if (NODE_UNLOCKED(c->tree.nodes[i]) &&
-            NODE_NTYPE(c->tree.nodes[i]) == ntype)
-            return 1;
+    for (y = 0; y < 4; y++) {
+        for (x = 0; x < 4; x++) {
+            tiles[x] = base_tile + y * 4 + x;
+            attrs[x] = pal;
+        }
+        set_bkg_tiles(bx, by + y, 4, 1, tiles);
+        VBK_REG = 1;
+        set_bkg_tiles(bx, by + y, 4, 1, attrs);
+        VBK_REG = 0;
     }
-    return 0;
 }
 
-/* ---- Damage calculation ----------------------------------- */
+/* ── Draw full battle scene ────────────────────────────────── */
+void battle_draw_scene(const Creature *player_c, const Creature *enemy_c) {
+    ui_clear_screen();
 
-static uint16_t calc_damage(Creature *attacker, Creature *defender,
-                            const SkillNode *skill, uint8_t def_boosted) {
+    /* Enemy info (top) */
+    ui_print(0, 0, species_names[enemy_c->species]);
+    ui_print(14, 0, "LV");
+    ui_print_num(16, 0, enemy_c->level);
+    ui_draw_hp_bar(0, 1, enemy_c->hp, enemy_c->max_hp, 10);
+    ui_print(11, 1, "HP");
+
+    /* Enemy sprite (top-left) */
+    gfx_load_creature_sprite(TILE_CREATURE2, enemy_c->species);
+    draw_creature_sprite(1, 2, TILE_CREATURE2, 2);
+
+    /* Player creature info */
+    ui_print(0, 11, species_names[player_c->species]);
+    ui_print(14, 11, "LV");
+    ui_print_num(16, 11, player_c->level);
+    ui_draw_hp_bar(0, 12, player_c->hp, player_c->max_hp, 8);
+    ui_print(9, 12, "HP");
+    ui_draw_sp_bar(12, 12, player_c->sp, player_c->max_sp, 6);
+    ui_print(19, 12, "S");
+
+    /* Player creature sprite (bottom-right) */
+    gfx_load_creature_sprite(TILE_CREATURE1, player_c->species);
+    draw_creature_sprite(14, 7, TILE_CREATURE1, 1);
+}
+
+/* ── Calculate damage ──────────────────────────────────────── */
+static uint8_t calc_damage(const Creature *attacker, const Creature *defender,
+                           uint8_t move_id) {
+    const MoveData *m = &move_table[move_id];
     uint16_t dmg;
-    uint8_t  eff;
-    uint16_t atk_stat, def_stat;
+    uint8_t eff, stab;
+    uint8_t atk_val = attacker->atk;
+    uint8_t def_val = defender->def;
+    uint8_t i;
 
-    atk_stat = attacker->atk;
-    def_stat = defender->def;
-
-    /* BERSERK: +1 ATK per 10% HP missing */
-    if (has_keystone(attacker, NTYPE_BERSERK) && attacker->max_hp > 0) {
-        uint8_t pct_missing = (uint8_t)(
-            (attacker->max_hp - attacker->hp) * 10u / attacker->max_hp);
-        atk_stat += pct_missing;
-    }
-
-    dmg = (uint16_t)(2u * attacker->level / 5u + 2u);
-    dmg = dmg * skill->power;
-    dmg = dmg * atk_stat;
-
-    if (def_boosted) def_stat = def_stat * 3u / 2u;
-
-    dmg = dmg / (def_stat * 50u);
-    dmg += 2u;
+    /* Base damage: (ATK * Power) / DEF */
+    dmg = ((uint16_t)atk_val * (uint16_t)m->power);
+    if (def_val < 1) def_val = 1;
+    dmg = dmg / (uint16_t)def_val;
 
     /* Type effectiveness */
-    eff = type_effectiveness(skill->element, defender->type);
-    if (eff == 2) {
-        /* MASTERY: super effective = 2x instead of 1.5x */
-        if (has_keystone(attacker, NTYPE_MASTERY))
-            dmg = dmg * 2u;
-        else
-            dmg = dmg * 3u / 2u;
-    }
-    if (eff == 0) dmg = dmg / 2u;
+    eff = type_effectiveness(m->type, defender->type);
+    dmg = (dmg * (uint16_t)eff) / 100;
 
-    /* Critical hit: chance = SPD/4 out of 256 */
-    last_was_crit = 0;
-    {
-        uint8_t crit_threshold = attacker->spd / 4u;
-        if (crit_threshold < 4) crit_threshold = 4;
-        if (rng_range(0, 255) < crit_threshold) {
-            last_was_crit = 1;
-            dmg = dmg * 3u / 2u;
+    /* STAB */
+    stab = type_stab(attacker->type, m->type);
+    dmg = (dmg * (uint16_t)stab) / 100;
+
+    /* Critical hit: SPD/4 % chance, 1.5x */
+    if (rng_range(0, 99) < (attacker->spd / 4)) {
+        dmg = (dmg * 150) / 100;
+    }
+
+    /* Random variance +/- 15% */
+    dmg = (dmg * (uint16_t)rng_range(85, 100)) / 100;
+
+    /* Fury: +25% ATK when below 50% HP */
+    for (i = 0; i < attacker->num_skills; i++) {
+        if (attacker->skills[i] == MSKILL_FURY &&
+            attacker->hp <= attacker->max_hp / 2) {
+            dmg = (dmg * 125) / 100;
+            break;
         }
     }
 
-    /* SPECIAL category: +25% damage */
-    if (skill->category == SKILL_SPECIAL) {
-        dmg = dmg * 5u / 4u;
+    /* Type Mastery: extra STAB */
+    for (i = 0; i < attacker->num_skills; i++) {
+        if (attacker->skills[i] == MSKILL_TYPE_MASTERY &&
+            attacker->type == m->type && m->type != ELEM_NORMAL) {
+            dmg = (dmg * 125) / 100;
+            break;
+        }
     }
 
-    /* Random variance 85-100% */
-    dmg = dmg * (uint16_t)rng_range(85, 100) / 100u;
+    /* Thick Hide: defender -2 flat */
+    for (i = 0; i < defender->num_skills; i++) {
+        if (defender->skills[i] == MSKILL_THICK_HIDE) {
+            if (dmg > 2) dmg -= 2; else dmg = 1;
+            break;
+        }
+    }
 
+    /* Iron Halo: -10% if player creature is defender with char skill */
+    if (defender == &game.creature &&
+        character_has_skill(&game.player, CSKILL_IRON_HALO)) {
+        dmg = (dmg * 90) / 100;
+    }
+
+    /* Blessed Rounds: ignore 10% DEF if player creature attacking */
+    if (attacker == &game.creature &&
+        character_has_skill(&game.player, CSKILL_BLESSED)) {
+        dmg = (dmg * 110) / 100;
+    }
+
+    /* Battle Cry: +15% for first 3 turns */
+    if (attacker == &game.creature && battle_cry_turns > 0) {
+        dmg = (dmg * 115) / 100;
+    }
+
+    /* Minimum 1 damage */
     if (dmg < 1) dmg = 1;
-    return dmg;
+    if (dmg > 255) dmg = 255;
+
+    return (uint8_t)dmg;
 }
 
-/* ---- Skill application ------------------------------------ */
+/* ── Enemy AI: pick a random move ──────────────────────────── */
+static uint8_t enemy_pick_move(void) {
+    uint8_t i, best = 0;
+    uint8_t best_dmg = 0;
 
-static void apply_skill(Creature *user, Creature *target,
-                        const SkillNode *skill, uint8_t is_player) {
-    uint16_t val;
-    uint8_t ntype = NODE_NTYPE(*skill);
-
-    last_was_crit = 0;
-
-    if (skill->category == SKILL_DEFEND) {
-        if (is_player) p_def_boost = 1; else e_def_boost = 1;
-        return;
-    }
-    if (skill->category == SKILL_SUPPORT) {
-        val = (uint16_t)skill->power / 2u + user->spc / 3u;
-        user->hp += val;
-        if (user->hp > user->max_hp) user->hp = user->max_hp;
-        return;
-    }
-
-    /* ATTACK or SPECIAL: deal damage */
-    val = calc_damage(user, target, skill,
-                      is_player ? e_def_boost : p_def_boost);
-
-    /* LAST_STAND: survive one lethal hit per battle */
-    if (val >= target->hp) {
-        uint8_t *ls = is_player ? &e_last_stand : &p_last_stand;
-        if (*ls && has_keystone(target, NTYPE_LAST_STAND)) {
-            target->hp = 1;
-            *ls = 0;
-        } else {
-            target->hp = 0;
-        }
-    } else {
-        target->hp -= val;
-    }
-
-    /* Consume defence boost (FORTRESS makes it persist) */
-    if (is_player) {
-        if (!has_keystone(target, NTYPE_FORTRESS)) e_def_boost = 0;
-    } else {
-        if (!has_keystone(target, NTYPE_FORTRESS)) p_def_boost = 0;
-    }
-
-    /* VAMPIRIC: heal 25% of damage dealt */
-    if (ntype == NTYPE_VAMPIRIC && val > 0) {
-        uint16_t heal = val / 4u;
-        if (heal < 1) heal = 1;
-        user->hp += heal;
-        if (user->hp > user->max_hp) user->hp = user->max_hp;
-    }
-
-    /* DRAIN: reduce target SP */
-    if (ntype == NTYPE_DRAIN) {
-        uint8_t drain = skill->cost;
-        if (drain > target->sp) target->sp = 0;
-        else target->sp -= drain;
-    }
-
-    /* LEECH_SP: recover half SP cost */
-    if (ntype == NTYPE_LEECH_SP) {
-        uint8_t recover = skill->cost / 2u;
-        if (recover < 1) recover = 1;
-        user->sp += recover;
-        if (user->sp > user->sp_max) user->sp = user->sp_max;
-    }
-
-    /* THORNS: reflect 25% damage back (can't KO attacker) */
-    if (has_keystone(target, NTYPE_THORNS) && val > 0) {
-        uint16_t reflect = val / 4u;
-        if (reflect < 1) reflect = 1;
-        if (reflect >= user->hp)
-            user->hp = 1;
-        else
-            user->hp -= reflect;
-    }
-}
-
-/* ---- Enemy AI --------------------------------------------- */
-
-static uint8_t enemy_pick_skill(void) {
-    uint8_t skills[MAX_ACTIVE_SKILLS];
-    uint8_t count, i, best_idx;
-    uint8_t best_score, score;
-    const SkillNode *sk;
-
-    count = skilltree_get_usable(&e_crea->tree, skills, MAX_ACTIVE_SKILLS);
-    if (count == 0) return 0;
-
-    best_idx   = 0;
-    best_score = 0;
-
-    for (i = 0; i < count; i++) {
-        sk = &e_crea->tree.nodes[skills[i]];
-        if (e_crea->sp < sk->cost) continue;
-
-        score = 10;
-
-        if (sk->category == SKILL_SUPPORT) {
-            /* Heal priority when low HP */
-            if (e_crea->hp * 100u / e_crea->max_hp < 30u)
-                score = 80;
-            else if (e_crea->hp * 100u / e_crea->max_hp < 60u)
-                score = 30;
-            else
-                score = 5;
-        } else if (sk->category == SKILL_ATTACK || sk->category == SKILL_SPECIAL) {
-            /* Prefer super-effective attacks */
-            uint8_t eff = type_effectiveness(sk->element, p_crea->type);
-            if (eff == 2) score = 55 + sk->power / 3u;
-            else if (eff == 1) score = 30 + sk->power / 4u;
-            else score = 10;
-            /* Bonus for high power */
-            score += sk->power / 10u;
-            /* Finish off: prefer attacks when target is low */
-            if (p_crea->hp * 100u / p_crea->max_hp < 25u)
-                score += 20;
-        } else if (sk->category == SKILL_DEFEND) {
-            if (e_crea->hp * 100u / e_crea->max_hp > 60u)
-                score = 20;
-            else
-                score = 8;
-        }
-
-        /* Add randomness so it's not fully predictable */
-        score += rng_range(0, 25);
-
-        if (score > best_score) {
-            best_score = score;
-            best_idx = skills[i];
-        }
-    }
-
-    if (best_score == 0) return 0;
-    return best_idx;
-}
-
-/* ---- Initiative ------------------------------------------- */
-
-static void determine_initiative(void) {
-    uint8_t p_swift = has_keystone(p_crea, NTYPE_SWIFT);
-    uint8_t e_swift = has_keystone(e_crea, NTYPE_SWIFT);
-
-    if (p_swift && !e_swift)
-        player_first = 1;
-    else if (e_swift && !p_swift)
-        player_first = 0;
-    else if (p_crea->spd > e_crea->spd)
-        player_first = 1;
-    else if (p_crea->spd < e_crea->spd)
-        player_first = 0;
-    else
-        player_first = rng_range(0, 1);
-}
-
-/* ---- End-of-turn effects ---------------------------------- */
-
-static void end_of_turn_effects(void) {
-    /* SP recovery: +1 per turn */
-    if (p_crea->sp < p_crea->sp_max) p_crea->sp++;
-    if (e_crea->sp < e_crea->sp_max) e_crea->sp++;
-
-    /* REGEN: heal 5% max HP per turn */
-    if (has_keystone(p_crea, NTYPE_REGEN)) {
-        uint16_t heal = p_crea->max_hp / 20u;
-        if (heal < 1) heal = 1;
-        p_crea->hp += heal;
-        if (p_crea->hp > p_crea->max_hp) p_crea->hp = p_crea->max_hp;
-    }
-    if (has_keystone(e_crea, NTYPE_REGEN)) {
-        uint16_t heal = e_crea->max_hp / 20u;
-        if (heal < 1) heal = 1;
-        e_crea->hp += heal;
-        if (e_crea->hp > e_crea->max_hp) e_crea->hp = e_crea->max_hp;
-    }
-}
-
-/* ---- Public API ------------------------------------------- */
-
-void battle_start(Creature *enemy, uint8_t boss_flag) {
-    bstate   = BSTATE_INIT;
-    e_crea   = enemy;
-    p_crea   = &party[0];
-    menu_sel = 0;
-    skill_sel = 0;
-    swap_sel  = 0;
-    msg_timer = 0;
-    is_boss   = boss_flag;
-    player_first = 1;
-    turn_phase   = 0;
-    p_def_boost  = 0;
-    e_def_boost  = 0;
-    last_was_crit = 0;
-    cant_flee_timer = 0;
-    last_actor = 0;
-    last_dmg = 0;
-    last_action = SKILL_ATTACK;
-    battle_result = BATTLE_RESULT_NONE;
-
-    /* LAST_STAND: available once per battle */
-    p_last_stand = has_keystone(p_crea, NTYPE_LAST_STAND);
-    e_last_stand = has_keystone(e_crea, NTYPE_LAST_STAND);
-
-    /* Reset battle SP to full */
-    p_crea->sp = p_crea->sp_max;
-    e_crea->sp = e_crea->sp_max;
-
-    /* Gather player skills */
-    p_skill_count = skilltree_get_usable(&p_crea->tree, p_skills,
-                                         MAX_ACTIVE_SKILLS);
-
-    /* Generate and load procedural sprites */
-    set_bkg_data(TILE_CREA_BASE, CREA_SPRITE_TILES,
-                 sprite_gen_build(e_crea));
-    set_bkg_data((uint8_t)(TILE_CREA_BASE + CREA_SPRITE_TILES), CREA_SPRITE_TILES,
-                 sprite_gen_build(p_crea));
-
-    /* Palette attributes for creature sprite areas */
-    {
-        static const uint8_t type_pal[] = { 5, 4, 3, 7, 6, 7 };
-        ui_set_palette_rect(14, 2, 4, 4, type_pal[e_crea->type]);
-        ui_set_palette_rect(2, 8, 4, 4, type_pal[p_crea->type]);
-    }
-}
-
-uint8_t battle_update(void) {
-
-    switch (bstate) {
-
-    /* ---- Initialisation ------------------------------------ */
-    case BSTATE_INIT:
-        msg_timer = 30;
-        bstate = BSTATE_PLAYER_MENU;
-        break;
-
-    /* ---- Player action menu -------------------------------- */
-    case BSTATE_PLAYER_MENU:
-        if (msg_timer) { msg_timer--; break; }
-        if (cant_flee_timer > 0) cant_flee_timer--;
-
-        if (PRESSED(J_UP)   || PRESSED(J_DOWN))  menu_sel ^= 1;
-        if (PRESSED(J_LEFT) || PRESSED(J_RIGHT)) menu_sel ^= 2;
-        if (menu_sel > 3) menu_sel = 0;
-
-        if (PRESSED(J_A)) {
-            switch (menu_sel) {
-                case 0: /* FIGHT */
-                    skill_sel = 0;
-                    bstate = BSTATE_SELECT_SKILL;
-                    break;
-                case 1: /* CATCH */
-                    bstate = BSTATE_CATCH_TRY;
-                    break;
-                case 2: /* SWAP */
-                    if (party_count > 1) {
-                        swap_sel = 0;
-                        bstate = BSTATE_SWAP;
-                    }
-                    break;
-                case 3: /* RUN */
-                    if (is_boss) {
-                        cant_flee_timer = 40;
-                    } else {
-                        bstate = BSTATE_RUN;
-                    }
-                    break;
+    /* Try each move, pick highest damage with some randomness */
+    for (i = 0; i < enemy.num_moves; i++) {
+        if (move_table[enemy.moves[i]].sp_cost <= enemy.sp) {
+            uint8_t est = move_table[enemy.moves[i]].power;
+            uint8_t eff = type_effectiveness(move_table[enemy.moves[i]].type,
+                                             game.creature.type);
+            est = (uint8_t)(((uint16_t)est * (uint16_t)eff) / 100);
+            if (est > best_dmg || (est == best_dmg && rng_chance(40))) {
+                best_dmg = est;
+                best = i;
             }
         }
-        break;
-
-    /* ---- Skill selection ----------------------------------- */
-    case BSTATE_SELECT_SKILL:
-        if (PRESSED(J_UP)   && skill_sel > 0) skill_sel--;
-        if (PRESSED(J_DOWN) && p_skill_count > 0 && skill_sel < p_skill_count - 1) skill_sel++;
-
-        if (PRESSED(J_B)) {
-            bstate = BSTATE_PLAYER_MENU;
-            break;
-        }
-        if (PRESSED(J_A)) {
-            if (p_crea->sp >= p_crea->tree.nodes[p_skills[skill_sel]].cost) {
-                /* Determine turn order by speed */
-                determine_initiative();
-                turn_phase = 0;
-                bstate = player_first ? BSTATE_PLAYER_ACT : BSTATE_ENEMY_ACT;
-            }
-        }
-        break;
-
-    /* ---- Player acts --------------------------------------- */
-    case BSTATE_PLAYER_ACT: {
-        const SkillNode *sk = &p_crea->tree.nodes[p_skills[skill_sel]];
-        uint16_t before_hp = e_crea->hp;
-        p_crea->sp -= sk->cost;
-        apply_skill(p_crea, e_crea, sk, 1);
-        /* MULTICAST: 30% chance to act again */
-        if (NODE_NTYPE(*sk) == NTYPE_MULTICAST && rng_range(0, 99) < 30) {
-            apply_skill(p_crea, e_crea, sk, 1);
-        }
-        last_actor = 0;
-        last_action = sk->category;
-        last_dmg = (before_hp > e_crea->hp) ? before_hp - e_crea->hp : 0;
-        msg_timer   = 45;
-        bstate = BSTATE_CHECK;
-        break;
     }
+    return best;
+}
 
-    /* ---- Enemy acts ---------------------------------------- */
-    case BSTATE_ENEMY_ACT: {
-        uint8_t eidx = enemy_pick_skill();
-        const SkillNode *sk = &e_crea->tree.nodes[eidx];
-        uint16_t before_hp = p_crea->hp;
-        if (e_crea->sp >= sk->cost) e_crea->sp -= sk->cost;
-        apply_skill(e_crea, p_crea, sk, 0);
-        if (NODE_NTYPE(*sk) == NTYPE_MULTICAST && rng_range(0, 99) < 30) {
-            apply_skill(e_crea, p_crea, sk, 0);
+/* ── Apply regen skills ────────────────────────────────────── */
+static void apply_regen(Creature *c) {
+    uint8_t i;
+    for (i = 0; i < c->num_skills; i++) {
+        if (c->skills[i] == MSKILL_REGEN) {
+            uint8_t heal = c->max_hp / 20;
+            if (heal < 1) heal = 1;
+            c->hp += heal;
+            if (c->hp > c->max_hp) c->hp = c->max_hp;
+            break;
         }
-        last_actor = 1;
-        last_action = sk->category;
-        last_dmg = (before_hp > p_crea->hp) ? before_hp - p_crea->hp : 0;
-        msg_timer   = 45;
-        bstate = BSTATE_CHECK;
-        break;
     }
+}
 
-    /* ---- Check HP / advance turn phase -------------------- */
-    case BSTATE_CHECK:
-        if (msg_timer) { msg_timer--; break; }
-
-        if (e_crea->hp == 0) { bstate = BSTATE_VICTORY; break; }
-        if (p_crea->hp == 0) { bstate = BSTATE_DEFEAT;  break; }
-
-        if (turn_phase == 0) {
-            /* First actor done → second actor goes */
-            turn_phase = 1;
-            bstate = player_first ? BSTATE_ENEMY_ACT : BSTATE_PLAYER_ACT;
-        } else {
-            /* Both acted → end of turn */
-            end_of_turn_effects();
-            bstate = BSTATE_PLAYER_MENU;
+/* ── Check evasion ─────────────────────────────────────────── */
+static uint8_t check_evasion(const Creature *defender) {
+    uint8_t i;
+    for (i = 0; i < defender->num_skills; i++) {
+        if (defender->skills[i] == MSKILL_EVASION) {
+            return rng_chance(10);
         }
-        break;
-
-    /* ---- Victory ------------------------------------------- */
-    case BSTATE_VICTORY:
-        if (msg_timer) { msg_timer--; break; }
-        if (battle_result == BATTLE_RESULT_NONE) {
-            creature_gain_exp(p_crea,
-                              20u + (uint16_t)e_crea->level * 4u);
-            battles_won++;
-            battle_result = BATTLE_RESULT_WIN;
-            msg_timer = 60;
-            break;
-        }
-        if (PRESSED(J_A) || PRESSED(J_B)) {
-            bstate = BSTATE_DONE;
-        }
-        break;
-
-    /* ---- Defeat -------------------------------------------- */
-    case BSTATE_DEFEAT:
-        if (msg_timer) { msg_timer--; break; }
-        if (battle_result == BATTLE_RESULT_NONE) {
-            battle_result = BATTLE_RESULT_LOSE;
-            msg_timer = 60;
-            break;
-        }
-        if (PRESSED(J_A) || PRESSED(J_B)) {
-            p_crea->hp = 1;
-            bstate = BSTATE_DONE;
-        }
-        break;
-
-    /* ---- Catch attempt ------------------------------------- */
-    case BSTATE_CATCH_TRY:
-        if (msg_timer) { msg_timer--; break; }
-        if (battle_result == BATTLE_RESULT_NONE) {
-            uint16_t chance;
-            chance = (uint16_t)species_table[e_crea->species].catch_rate;
-            chance = chance * (e_crea->max_hp * 2u - e_crea->hp);
-            chance = chance / (e_crea->max_hp * 2u);
-            if (chance < 10) chance = 10;
-
-            if (rng_range(0, 255) < (uint8_t)chance && party_count < MAX_PARTY) {
-                memcpy(&party[party_count], e_crea, sizeof(Creature));
-                party_count++;
-                total_catches++;
-                battle_result = BATTLE_RESULT_CATCH;
-                msg_timer = 60;
-            } else {
-                msg_timer = 30;
-                turn_phase = 1;  /* enemy gets free attack */
-                bstate = BSTATE_ENEMY_ACT;
-            }
-            break;
-        }
-        if (PRESSED(J_A) || PRESSED(J_B)) {
-            bstate = BSTATE_DONE;
-        }
-        break;
-
-    /* ---- Run away ------------------------------------------ */
-    case BSTATE_RUN:
-        if (msg_timer) { msg_timer--; break; }
-        if (battle_result == BATTLE_RESULT_NONE) {
-            if (p_crea->spd >= e_crea->spd || rng_range(0, 3) > 0) {
-                battle_result = BATTLE_RESULT_RUN;
-                msg_timer = 30;
-            } else {
-                msg_timer = 30;
-                turn_phase = 1;
-                bstate = BSTATE_ENEMY_ACT;
-            }
-            break;
-        }
-        if (PRESSED(J_A) || PRESSED(J_B)) {
-            bstate = BSTATE_DONE;
-        }
-        break;
-
-    /* ---- Party swap ---------------------------------------- */
-    case BSTATE_SWAP:
-        if (PRESSED(J_UP)   && swap_sel > 0) swap_sel--;
-        if (PRESSED(J_DOWN) && swap_sel < party_count - 1) swap_sel++;
-
-        if (PRESSED(J_B)) {
-            bstate = BSTATE_PLAYER_MENU;
-            break;
-        }
-        if (PRESSED(J_A)) {
-            if (swap_sel != 0 && party[swap_sel].hp > 0) {
-                /* Swap lead with selected */
-                Creature tmp;
-                memcpy(&tmp, &party[0], sizeof(Creature));
-                memcpy(&party[0], &party[swap_sel], sizeof(Creature));
-                memcpy(&party[swap_sel], &tmp, sizeof(Creature));
-
-                /* Update battle state for new lead */
-                p_crea = &party[0];
-                p_skill_count = skilltree_get_usable(&p_crea->tree, p_skills,
-                                                     MAX_ACTIVE_SKILLS);
-                p_crea->sp = p_crea->sp_max;
-                p_def_boost = 0;
-                p_last_stand = has_keystone(p_crea, NTYPE_LAST_STAND);
-
-                /* Reload player sprite */
-                set_bkg_data((uint8_t)(TILE_CREA_BASE + CREA_SPRITE_TILES),
-                             CREA_SPRITE_TILES,
-                             sprite_gen_build(p_crea));
-
-                msg_timer = 20;
-                turn_phase = 1;  /* enemy gets free attack after swap */
-                bstate = BSTATE_ENEMY_ACT;
-            }
-        }
-        break;
-
-    /* ---- Done – signal main to leave battle state ---------- */
-    case BSTATE_DONE:
-        return 1;
     }
-
     return 0;
 }
 
-/* ---- Rendering (delegates to ui.c helpers) ---------------- */
-
-void battle_render(void) {
-    char buf[SKILL_NAME_LEN];
+/* ── Apply counter damage ──────────────────────────────────── */
+static uint8_t check_counter(const Creature *defender, uint8_t dmg) {
     uint8_t i;
-
-    /* Clear screen */
-    ui_clear();
-
-    /* Enemy info – top */
-    ui_print(1, 0, e_crea->name);
-    ui_print(12, 0, "LV");
-    ui_print_num(14, 0, e_crea->level);
-    ui_draw_hp_bar(1, 1, e_crea->hp, e_crea->max_hp);
-
-    /* Player info – middle */
-    ui_print(1, 6, p_crea->name);
-    ui_print(12, 6, "LV");
-    ui_print_num(14, 6, p_crea->level);
-    ui_draw_hp_bar(1, 7, p_crea->hp, p_crea->max_hp);
-    /* SP display */
-    ui_print(1, 8, "SP");
-    ui_print_num(3, 8, p_crea->sp);
-    ui_print(5, 8, "/");
-    ui_print_num(6, 8, p_crea->sp_max);
-
-    /* Draw creature type badges */
-    ui_print(1, 2, type_names[e_crea->type]);
-    ui_print(1, 9, type_names[p_crea->type]);
-
-    /* Draw creature sprites as 4x4 background tiles */
-    {
-        uint8_t row_tiles[4];
-        uint8_t r;
-        /* Enemy sprite */
-        for (r = 0; r < 4; r++) {
-            row_tiles[0] = TILE_CREA_BASE + r * 4;
-            row_tiles[1] = TILE_CREA_BASE + r * 4 + 1;
-            row_tiles[2] = TILE_CREA_BASE + r * 4 + 2;
-            row_tiles[3] = TILE_CREA_BASE + r * 4 + 3;
-            set_bkg_tiles(14, 2 + r, 4, 1, row_tiles);
-        }
-        /* Player sprite */
-        for (r = 0; r < 4; r++) {
-            row_tiles[0] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4;
-            row_tiles[1] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 1;
-            row_tiles[2] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 2;
-            row_tiles[3] = TILE_CREA_BASE + CREA_SPRITE_TILES + r * 4 + 3;
-            set_bkg_tiles(2, 8 + r, 4, 1, row_tiles);
+    for (i = 0; i < defender->num_skills; i++) {
+        if (defender->skills[i] == MSKILL_COUNTER) {
+            return (dmg * 20) / 100;
         }
     }
+    return 0;
+}
 
-    /* Re-apply creature palette attributes (cleared by ui_clear) */
-    {
-        static const uint8_t type_pal[] = { 5, 4, 3, 7, 6, 7 };
-        ui_set_palette_rect(14, 2, 4, 4, type_pal[e_crea->type]);
-        ui_set_palette_rect(2, 8, 4, 4, type_pal[p_crea->type]);
+/* ── Battle menu ───────────────────────────────────────────── */
+static const char *const battle_menu_opts[] = { "FIGHT", "CATCH", "RUN" };
+static const char *const post_battle_opts[] = { "EAT", "FEED", "CATCH" };
+
+/* ── Run battle ────────────────────────────────────────────── */
+uint8_t battle_run(void) {
+    uint8_t player_spd, enemy_spd;
+    uint8_t player_move, enemy_move;
+    uint8_t dmg, counter_dmg;
+    uint8_t choice;
+    uint8_t player_first;
+    const MoveData *pm;
+
+    battle_cry_turns = 0;
+    if (character_has_skill(&game.player, CSKILL_BATTLE_CRY)) {
+        battle_cry_turns = 3;
     }
 
-    /* ---- State-dependent lower section -------------------- */
-    switch (bstate) {
+    /* Set battle palettes */
+    gfx_set_battle_palettes(game.creature.type, enemy.type);
 
-    case BSTATE_PLAYER_MENU:
-        ui_draw_box(0, 12, 20, 6);
-        ui_print(2,  13, "FIGHT");
-        ui_print(11, 13, "CATCH");
-        ui_print(2,  15, "SWAP");
-        ui_print(11, 15, "RUN");
-        /* Selection arrow */
-        ui_print((menu_sel & 2) ? 10 : 1,
-                 (menu_sel & 1) ? 15 : 13,
-                 ">");
-        /* "Can't flee" message for bosses */
-        if (cant_flee_timer > 0) {
-            ui_print(2, 16, "CANT FLEE!");
+    /* Draw initial scene */
+    battle_draw_scene(&game.creature, &enemy);
+
+    /* Intro message */
+    ui_draw_box(0, 13, 20, 5);
+    ui_print(1, 14, "A WILD ");
+    ui_print(8, 14, species_names[enemy.species]);
+    ui_print(1, 15, "APPEARED!");
+    ui_wait_press();
+
+    /* ── Main battle loop ──────────────────────────────────── */
+    while (game.creature.hp > 0 && enemy.hp > 0) {
+        /* Redraw scene */
+        battle_draw_scene(&game.creature, &enemy);
+
+        /* Show menu */
+        ui_draw_box(0, 13, 20, 5);
+        ui_print(1, 14, "WHAT WILL");
+        ui_print(1, 15, species_names[game.creature.species]);
+        ui_print(1, 16, "DO?");
+        ui_draw_box(10, 14, 10, 4);
+        choice = ui_menu(11, 15, battle_menu_opts, 3);
+
+        if (choice == 0xFF) continue; /* cancelled, re-show */
+
+        if (choice == 2) {
+            /* RUN */
+            if (rng_chance(50 + game.creature.spd - enemy.spd)) {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "GOT AWAY");
+                ui_print(1, 15, "SAFELY!");
+                ui_wait_press();
+                return BATTLE_RUN;
+            } else {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "CAN'T ESCAPE!");
+                ui_wait_press();
+                /* Enemy gets a free turn */
+                enemy_move = enemy_pick_move();
+                pm = &move_table[enemy.moves[enemy_move]];
+                if (rng_range(0, 99) < pm->accuracy &&
+                    !check_evasion(&game.creature)) {
+                    dmg = calc_damage(&enemy, &game.creature,
+                                      enemy.moves[enemy_move]);
+                    if (dmg >= game.creature.hp) game.creature.hp = 0;
+                    else game.creature.hp -= dmg;
+                    enemy.sp -= pm->sp_cost;
+                }
+                battle_draw_scene(&game.creature, &enemy);
+                continue;
+            }
         }
-        break;
 
-    case BSTATE_SELECT_SKILL: {
-        uint8_t scroll_top = 0;
-        ui_draw_box(0, 10, 20, 8);
-        ui_print(1, 10, "PICK SKILL");
-        if (skill_sel >= 4) scroll_top = skill_sel - 3;
-        for (i = 0; i < 4; i++) {
-            uint8_t si = scroll_top + i;
-            if (si >= p_skill_count) break;
+        if (choice == 1) {
+            /* CATCH attempt */
+            uint8_t catch_rate = 30 + character_catch_bonus(&game.player);
+            /* Lower HP = higher catch rate */
+            catch_rate += (uint8_t)((uint16_t)(enemy.max_hp - enemy.hp) * 20 /
+                                    (uint16_t)enemy.max_hp);
+            if (character_has_skill(&game.player, CSKILL_VETERANS_EYE))
+                catch_rate += 10;
+            if (catch_rate > 95) catch_rate = 95;
+
+            ui_draw_box(0, 13, 20, 5);
+            ui_print(1, 14, "THREW A TRAP...");
+            ui_wait_press();
+
+            if (rng_chance(catch_rate)) {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "CAUGHT");
+                ui_print(1, 15, species_names[enemy.species]);
+                ui_print(1, 16, "!");
+                ui_wait_press();
+                /* Replace player creature */
+                memcpy(&game.creature, &enemy, sizeof(Creature));
+                creature_heal(&game.creature);
+                game.creatures_caught++;
+                return BATTLE_WIN;
+            } else {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "IT BROKE FREE!");
+                ui_wait_press();
+                /* Enemy gets a free turn */
+                enemy_move = enemy_pick_move();
+                pm = &move_table[enemy.moves[enemy_move]];
+                if (rng_range(0, 99) < pm->accuracy &&
+                    !check_evasion(&game.creature)) {
+                    dmg = calc_damage(&enemy, &game.creature,
+                                      enemy.moves[enemy_move]);
+                    if (dmg >= game.creature.hp) game.creature.hp = 0;
+                    else game.creature.hp -= dmg;
+                    enemy.sp -= pm->sp_cost;
+                }
+                battle_draw_scene(&game.creature, &enemy);
+                continue;
+            }
+        }
+
+        /* FIGHT: choose a move */
+        {
+            const char *move_opts[MAX_MOVES];
+            uint8_t i;
+            for (i = 0; i < game.creature.num_moves; i++) {
+                move_opts[i] = move_names[game.creature.moves[i]];
+            }
+            ui_draw_box(0, 13, 20, 5);
+            choice = ui_menu(1, 14, move_opts, game.creature.num_moves);
+            if (choice == 0xFF) continue; /* back to main menu */
+
+            player_move = choice;
+        }
+
+        /* Check SP */
+        pm = &move_table[game.creature.moves[player_move]];
+        if (pm->sp_cost > game.creature.sp) {
+            ui_draw_box(0, 13, 20, 5);
+            ui_print(1, 14, "NOT ENOUGH SP!");
+            ui_wait_press();
+            continue;
+        }
+
+        /* Determine turn order */
+        player_spd = game.creature.spd;
+        enemy_spd = enemy.spd;
+        if (player_spd > enemy_spd) {
+            player_first = 1;
+        } else if (enemy_spd > player_spd) {
+            player_first = 0;
+        } else {
+            /* Speed tie */
+            if (character_has_skill(&game.player, CSKILL_TACTICAL)) {
+                player_first = 1;
+            } else {
+                player_first = rng_chance(50);
+            }
+        }
+
+        enemy_move = enemy_pick_move();
+
+        /* ── Execute turns ─────────────────────────────────── */
+        if (player_first) {
+            /* Player attacks */
+            game.creature.sp -= pm->sp_cost;
+            ui_draw_box(0, 13, 20, 5);
+            ui_print(1, 14, species_names[game.creature.species]);
+            ui_print(1, 15, "USED ");
+            ui_print(6, 15, move_names[game.creature.moves[player_move]]);
+            ui_wait_press();
+
+            if (rng_range(0, 99) < pm->accuracy &&
+                !check_evasion(&enemy)) {
+                dmg = calc_damage(&game.creature, &enemy,
+                                  game.creature.moves[player_move]);
+                if (dmg >= enemy.hp) enemy.hp = 0;
+                else enemy.hp -= dmg;
+
+                counter_dmg = check_counter(&enemy, dmg);
+                if (counter_dmg > 0) {
+                    if (counter_dmg >= game.creature.hp)
+                        game.creature.hp = 0;
+                    else
+                        game.creature.hp -= counter_dmg;
+                }
+            } else {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "IT MISSED!");
+                ui_wait_press();
+            }
+
+            battle_draw_scene(&game.creature, &enemy);
+
+            /* Check enemy KO */
+            if (enemy.hp == 0) break;
+
+            /* Enemy attacks */
             {
-                const SkillNode *sk = &p_crea->tree.nodes[p_skills[si]];
-                skilltree_skill_name(buf, sk->element, sk->category,
-                                     p_skills[si] & 3);
-                ui_print(3, 12 + i, buf);
-                /* Show keystone marker for enhanced actives */
-                if (NODE_NTYPE(*sk) != NTYPE_NORMAL)
-                    ui_print(14, 12 + i, "!");
-                ui_print_num(15, 12 + i, sk->power);
-                ui_print(17, 12 + i, skilltree_cat_tag(sk->category));
+                const MoveData *em = &move_table[enemy.moves[enemy_move]];
+                if (em->sp_cost <= enemy.sp) {
+                    enemy.sp -= em->sp_cost;
+                    ui_draw_box(0, 13, 20, 5);
+                    ui_print(1, 14, species_names[enemy.species]);
+                    ui_print(1, 15, "USED ");
+                    ui_print(6, 15, move_names[enemy.moves[enemy_move]]);
+                    ui_wait_press();
+
+                    if (rng_range(0, 99) < em->accuracy &&
+                        !check_evasion(&game.creature)) {
+                        dmg = calc_damage(&enemy, &game.creature,
+                                          enemy.moves[enemy_move]);
+                        if (dmg >= game.creature.hp) game.creature.hp = 0;
+                        else game.creature.hp -= dmg;
+
+                        counter_dmg = check_counter(&game.creature, dmg);
+                        if (counter_dmg > 0) {
+                            if (counter_dmg >= enemy.hp) enemy.hp = 0;
+                            else enemy.hp -= counter_dmg;
+                        }
+                    } else {
+                        ui_draw_box(0, 13, 20, 5);
+                        ui_print(1, 14, "IT MISSED!");
+                        ui_wait_press();
+                    }
+                }
+            }
+        } else {
+            /* Enemy attacks first */
+            {
+                const MoveData *em = &move_table[enemy.moves[enemy_move]];
+                if (em->sp_cost <= enemy.sp) {
+                    enemy.sp -= em->sp_cost;
+                    ui_draw_box(0, 13, 20, 5);
+                    ui_print(1, 14, species_names[enemy.species]);
+                    ui_print(1, 15, "USED ");
+                    ui_print(6, 15, move_names[enemy.moves[enemy_move]]);
+                    ui_wait_press();
+
+                    if (rng_range(0, 99) < em->accuracy &&
+                        !check_evasion(&game.creature)) {
+                        dmg = calc_damage(&enemy, &game.creature,
+                                          enemy.moves[enemy_move]);
+                        if (dmg >= game.creature.hp) game.creature.hp = 0;
+                        else game.creature.hp -= dmg;
+
+                        counter_dmg = check_counter(&game.creature, dmg);
+                        if (counter_dmg > 0) {
+                            if (counter_dmg >= enemy.hp) enemy.hp = 0;
+                            else enemy.hp -= counter_dmg;
+                        }
+                    } else {
+                        ui_draw_box(0, 13, 20, 5);
+                        ui_print(1, 14, "IT MISSED!");
+                        ui_wait_press();
+                    }
+                }
+            }
+
+            battle_draw_scene(&game.creature, &enemy);
+
+            /* Check player KO */
+            if (game.creature.hp == 0) break;
+
+            /* Player attacks */
+            game.creature.sp -= pm->sp_cost;
+            ui_draw_box(0, 13, 20, 5);
+            ui_print(1, 14, species_names[game.creature.species]);
+            ui_print(1, 15, "USED ");
+            ui_print(6, 15, move_names[game.creature.moves[player_move]]);
+            ui_wait_press();
+
+            if (rng_range(0, 99) < pm->accuracy &&
+                !check_evasion(&enemy)) {
+                dmg = calc_damage(&game.creature, &enemy,
+                                  game.creature.moves[player_move]);
+                if (dmg >= enemy.hp) enemy.hp = 0;
+                else enemy.hp -= dmg;
+
+                counter_dmg = check_counter(&enemy, dmg);
+                if (counter_dmg > 0) {
+                    if (counter_dmg >= game.creature.hp)
+                        game.creature.hp = 0;
+                    else
+                        game.creature.hp -= counter_dmg;
+                }
+            } else {
+                ui_draw_box(0, 13, 20, 5);
+                ui_print(1, 14, "IT MISSED!");
+                ui_wait_press();
             }
         }
-        if (p_skill_count > 0) {
-            ui_print(1, 12 + (skill_sel - scroll_top), ">");
-        }
-        break;
+
+        battle_draw_scene(&game.creature, &enemy);
+
+        /* Apply regen at end of turn */
+        apply_regen(&game.creature);
+        apply_regen(&enemy);
+
+        /* Decrement battle cry */
+        if (battle_cry_turns > 0) battle_cry_turns--;
     }
 
-    case BSTATE_SWAP:
-        ui_draw_box(0, 10, 20, 8);
-        ui_print(1, 10, "SWAP TO");
-        for (i = 0; i < party_count && i < 4; i++) {
-            Creature *c = &party[i];
-            uint8_t y = 12 + i;
-            if (i == 0) {
-                ui_print(3, y, c->name);
-                ui_print(13, y, "(CUR)");
-            } else if (c->hp == 0) {
-                ui_print(3, y, c->name);
-                ui_print(13, y, "FAINT");
-            } else {
-                ui_print(3, y, c->name);
-                ui_print(13, y, "LV");
-                ui_print_num(15, y, c->level);
-            }
-        }
-        ui_print(1, 12 + swap_sel, ">");
-        break;
-
-    case BSTATE_VICTORY:
-        ui_draw_box(0, 12, 20, 6);
-        ui_print(2, 13, "YOU WIN!");
-        ui_print(2, 15, "EXP +");
-        ui_print_num(7, 15, 20u + (uint16_t)e_crea->level * 4u);
-        break;
-
-    case BSTATE_DEFEAT:
-        ui_draw_box(0, 12, 20, 6);
-        ui_print(2, 13, "DEFEATED...");
-        ui_print(2, 15, "PRESS A");
-        break;
-
-    case BSTATE_CATCH_TRY:
-        ui_draw_box(0, 12, 20, 6);
-        if (battle_result == BATTLE_RESULT_CATCH) {
-            ui_print(2, 13, "CAUGHT ");
-            ui_print(9, 13, e_crea->name);
-        } else {
-            ui_print(2, 13, "CATCHING...");
-        }
-        break;
-
-    case BSTATE_RUN:
-        ui_draw_box(0, 12, 20, 6);
-        if (battle_result == BATTLE_RESULT_RUN) {
-            ui_print(2, 13, "GOT AWAY!");
-        } else {
-            ui_print(2, 13, "CANT ESCAPE!");
-        }
-        break;
-
-    default:
-        /* INIT / CHECK / ACT states: show a message box with feedback */
-        ui_draw_box(0, 14, 20, 4);
-        if (bstate == BSTATE_CHECK) {
-            ui_print(2, 15, last_actor == 0 ? p_crea->name : e_crea->name);
-            if (last_action == SKILL_SUPPORT) {
-                ui_print(11, 15, "HEALS!");
-            } else if (last_action == SKILL_DEFEND) {
-                ui_print(11, 15, "GUARDS!");
-            } else {
-                ui_print(11, 15, "ATTACKS!");
-            }
-            if (last_dmg > 0) {
-                ui_print(2, 16, "DMG ");
-                ui_print_num(6, 16, last_dmg);
-            }
-            if (last_was_crit) {
-                ui_print(11, 16, "CRITICAL!");
-            }
-        }
-        break;
+    /* ── Battle end ────────────────────────────────────────── */
+    if (enemy.hp == 0) {
+        /* Victory */
+        ui_draw_box(0, 13, 20, 5);
+        ui_print(1, 14, species_names[enemy.species]);
+        ui_print(1, 15, "WAS DEFEATED!");
+        ui_wait_press();
+        game.battles_won++;
+        return BATTLE_WIN;
+    } else {
+        /* Defeat */
+        ui_draw_box(0, 13, 20, 5);
+        ui_print(1, 14, species_names[game.creature.species]);
+        ui_print(1, 15, "FAINTED...");
+        ui_wait_press();
+        return BATTLE_LOSE;
     }
+}
+
+/* ── Initialize battle with enemy ──────────────────────────── */
+void battle_init(Creature *e) {
+    memcpy(&enemy, e, sizeof(Creature));
+}
+
+/* ── Post-battle choice ────────────────────────────────────── */
+uint8_t battle_post_choice(const Creature *defeated) {
+    uint8_t choice;
+    (void)defeated;
+
+    ui_draw_box(0, 13, 20, 5);
+    ui_print(1, 14, "WHAT DO YOU DO");
+    ui_print(1, 15, "WITH THE PREY?");
+    ui_draw_box(10, 14, 10, 4);
+    choice = ui_menu(11, 15, post_battle_opts, 3);
+
+    if (choice == 0xFF) choice = 0; /* default to EAT if cancelled */
+    return choice;
 }

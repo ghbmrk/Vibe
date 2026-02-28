@@ -1,166 +1,181 @@
-/*  creature.c  –  Species data, creature creation and stat growth.
- */
-
+/* creature.c - Creature species data and stat calculations */
 #include "creature.h"
-#include "skilltree.h"
-#include <string.h>
+#include "rng.h"
 
-/* ---- Species table ---------------------------------------- */
-
-const SpeciesData species_table[MAX_SPECIES] = {
-    /*  name        type         HP ATK DEF SPD SPC catch */
-    { "Emberon",  TYPE_FLAME,   45, 52, 43, 65, 50,  45 },
-    { "Tidalin",  TYPE_AQUA,    50, 48, 55, 43, 55,  45 },
-    { "Terravlt", TYPE_TERRA,   55, 55, 60, 35, 40,  45 },
-    { "Zappix",   TYPE_VOLT,    40, 50, 40, 70, 55,  60 },
-    { "Shadrix",  TYPE_SHADOW,  42, 58, 42, 62, 48,  60 },
-    { "Luminos",  TYPE_AETHER,  48, 45, 50, 55, 60,  60 },
+/* ── Species base stats ────────────────────────────────────── */
+/*                     HP  ATK DEF SPD  TYPE          move1        move2 */
+const SpeciesData species_table[SP_COUNT] = {
+    { 20,  8,  5,  6,  ELEM_FIRE,     MOVE_TACKLE, MOVE_EMBER    },  /* EMBERON  */
+    { 22,  6,  7,  5,  ELEM_WATER,    MOVE_TACKLE, MOVE_SPLASH   },  /* TIDALIN  */
+    { 25,  7,  8,  4,  ELEM_EARTH,    MOVE_TACKLE, MOVE_ROCKFALL },  /* TERRAVOLT */
+    { 18,  7,  4,  9,  ELEM_ELECTRIC, MOVE_TACKLE, MOVE_SPARK    },  /* ZAPPIX   */
+    { 19,  9,  5,  7,  ELEM_SHADOW,   MOVE_TACKLE, MOVE_HEX      },  /* SHADRIX  */
+    { 21,  6,  6,  8,  ELEM_LIGHT,    MOVE_TACKLE, MOVE_FLASH    },  /* LUMINOS  */
 };
 
-const char *type_names[NUM_TYPES] = {
-    "FLAME", "AQUA", "TERRA", "VOLT", "SHADOW", "AETHER"
+/* ── Move data ─────────────────────────────────────────────── */
+/*                        type           pow  acc  sp */
+const MoveData move_table[MOVE_COUNT] = {
+    { ELEM_NORMAL,    5,  95,  2 },  /* TACKLE   */
+    { ELEM_FIRE,      6,  90,  3 },  /* EMBER    */
+    { ELEM_WATER,     6,  90,  3 },  /* SPLASH   */
+    { ELEM_EARTH,     6,  90,  3 },  /* ROCKFALL */
+    { ELEM_ELECTRIC,  6,  90,  3 },  /* SPARK    */
+    { ELEM_SHADOW,    6,  90,  3 },  /* HEX      */
+    { ELEM_LIGHT,     6,  90,  3 },  /* FLASH    */
+    { ELEM_FIRE,      9,  80,  5 },  /* BLAZE    */
+    { ELEM_WATER,     9,  80,  5 },  /* TORRENT  */
+    { ELEM_EARTH,     9,  80,  5 },  /* QUAKE    */
+    { ELEM_ELECTRIC,  9,  80,  5 },  /* THUNDER  */
+    { ELEM_SHADOW,    9,  80,  5 },  /* VOID     */
+    { ELEM_LIGHT,     9,  80,  5 },  /* RADIANCE */
+    { ELEM_FIRE,     13,  70,  8 },  /* INFERNO  */
+    { ELEM_WATER,    13,  70,  8 },  /* TSUNAMI  */
+    { ELEM_EARTH,    13,  70,  8 },  /* TREMOR   */
+    { ELEM_ELECTRIC, 13,  70,  8 },  /* SURGE    */
+    { ELEM_SHADOW,   13,  70,  8 },  /* ECLIPSE  */
+    { ELEM_LIGHT,    13,  70,  8 },  /* NOVA     */
+    { ELEM_NORMAL,    7,  85,  3 },  /* STRIKE   */
+    { ELEM_NORMAL,   10,  75,  5 },  /* SLAM     */
+    { ELEM_NORMAL,    4, 100,  1 },  /* RUSH     */
 };
 
-/* ---- Type effectiveness ----------------------------------- */
+const char *const species_names[SP_COUNT] = {
+    "EMBERON", "TIDALIN", "TERRAVOLT",
+    "ZAPPIX",  "SHADRIX", "LUMINOS"
+};
 
-uint8_t type_effectiveness(uint8_t atk_type, uint8_t def_type) {
-    /* Same type: resisted */
-    if (atk_type == def_type) return 0;
+const char *const move_names[MOVE_COUNT] = {
+    "TACKLE",  "EMBER",   "SPLASH",  "ROCKFALL",
+    "SPARK",   "HEX",     "FLASH",   "BLAZE",
+    "TORRENT", "QUAKE",   "THUNDER", "VOID",
+    "RADIANCE","INFERNO", "TSUNAMI", "TREMOR",
+    "SURGE",   "ECLIPSE", "NOVA",    "STRIKE",
+    "SLAM",    "RUSH"
+};
 
-    /* Circular: FLAME > TERRA > VOLT > AQUA > FLAME */
-    if (atk_type == TYPE_FLAME  && def_type == TYPE_TERRA) return 2;
-    if (atk_type == TYPE_TERRA  && def_type == TYPE_VOLT)  return 2;
-    if (atk_type == TYPE_VOLT   && def_type == TYPE_AQUA)  return 2;
-    if (atk_type == TYPE_AQUA   && def_type == TYPE_FLAME) return 2;
+const char *const elem_names[ELEM_COUNT] = {
+    "FIRE", "WATER", "EARTH", "ELEC",
+    "SHADOW", "LIGHT", "NORMAL"
+};
 
-    /* Reverse of circular: not very effective */
-    if (atk_type == TYPE_TERRA  && def_type == TYPE_FLAME) return 0;
-    if (atk_type == TYPE_VOLT   && def_type == TYPE_TERRA) return 0;
-    if (atk_type == TYPE_AQUA   && def_type == TYPE_VOLT)  return 0;
-    if (atk_type == TYPE_FLAME  && def_type == TYPE_AQUA)  return 0;
-
-    /* SHADOW <-> AETHER: mutually super effective */
-    if (atk_type == TYPE_SHADOW && def_type == TYPE_AETHER) return 2;
-    if (atk_type == TYPE_AETHER && def_type == TYPE_SHADOW) return 2;
-
-    return 1; /* neutral */
+/* ── XP curve ──────────────────────────────────────────────── */
+uint16_t creature_xp_for_level(uint8_t level) {
+    return (uint16_t)level * (uint16_t)level * 10;
 }
 
-/* ---- Experience curve ------------------------------------- */
-
-uint16_t creature_exp_for_level(uint8_t level) {
-    /* Simple curve: level^2 * 4 */
-    return (uint16_t)level * (uint16_t)level * 4u;
-}
-
-/* ---- Stat calculation ------------------------------------- */
-
-void creature_calc_stats(Creature *c) {
-    const SpeciesData *sp = &species_table[c->species];
-    uint16_t lv = c->level;
+/* ── Create creature ───────────────────────────────────────── */
+void creature_create(Creature *c, uint8_t species, uint8_t level) {
+    const SpeciesData *base = &species_table[species];
     uint8_t i;
-
-    /* Base stats from species + level */
-    c->max_hp = (uint16_t)((sp->base_hp  * 2u * lv) / 100u) + lv + 10u;
-    c->atk    = (uint8_t) ((sp->base_atk * 2u * lv) / 100u) + 5u;
-    c->def    = (uint8_t) ((sp->base_def * 2u * lv) / 100u) + 5u;
-    c->spd    = (uint8_t) ((sp->base_spd * 2u * lv) / 100u) + 5u;
-    c->spc    = (uint8_t) ((sp->base_spc * 2u * lv) / 100u) + 5u;
-    c->sp_max = 10u + lv / 2u;
-
-    /* Skill tree bonuses – each unlocked node modifies stats.
-     * This is what makes two creatures of the same species different. */
-    for (i = 1; i < c->tree.count; i++) {
-        if (!NODE_UNLOCKED(c->tree.nodes[i])) continue;
-
-        /* Passive keystones don't give flat stat bonuses –
-         * their effects are handled in battle. */
-        if (NODE_IS_PASSIVE(c->tree.nodes[i])) {
-            /* GLASS_CANNON is applied after the loop */
-            continue;
-        }
-
-        switch (c->tree.nodes[i].category) {
-            case SKILL_ATTACK:  c->atk += 2; break;
-            case SKILL_DEFEND:  c->def += 2; c->max_hp += 3; break;
-            case SKILL_SUPPORT: c->spc += 2; c->max_hp += 2; break;
-            case SKILL_SPECIAL: c->atk += 1; c->spc += 1; c->spd += 1; break;
-        }
-    }
-
-    /* GLASS_CANNON keystone: +50% ATK, -30% DEF (permanent trade-off) */
-    for (i = 1; i < c->tree.count; i++) {
-        if (NODE_UNLOCKED(c->tree.nodes[i]) &&
-            NODE_NTYPE(c->tree.nodes[i]) == NTYPE_GLASS) {
-            c->atk = (uint8_t)((uint16_t)c->atk * 3u / 2u);
-            c->def = (uint8_t)((uint16_t)c->def * 7u / 10u);
-            if (c->def < 1) c->def = 1;
-            break;
-        }
-    }
-}
-
-/* ---- Creature initialisation ------------------------------ */
-
-void creature_init(Creature *c, uint8_t species, uint8_t level, uint16_t seed) {
-    uint8_t i;
-    const char *src;
 
     memset(c, 0, sizeof(Creature));
-    c->species   = species;
-    c->type      = species_table[species].type;
-    c->level     = level;
-    c->tree_seed = seed;
+    c->species = species;
+    c->level = level;
+    c->type = base->type;
+    c->xp = 0;
+    c->xp_next = creature_xp_for_level(level + 1);
 
-    /* Copy species name as default nickname */
-    src = species_table[species].name;
-    for (i = 0; i < NAME_LEN - 1 && src[i] != '\0'; i++) {
-        c->name[i] = src[i];
+    /* Set starting moves */
+    c->moves[0] = base->start_move1;
+    c->moves[1] = base->start_move2;
+    c->num_moves = 2;
+
+    /* Init gear to none */
+    for (i = 0; i < GEAR_SLOTS; i++) {
+        c->gear[i] = GEAR_NONE;
     }
-    c->name[i] = '\0';
 
-    /* Derive stats */
     creature_calc_stats(c);
-    c->hp       = c->max_hp;
-    c->sp       = c->sp_max;
-    c->exp      = 0;
-    c->exp_next = creature_exp_for_level(level + 1);
-    c->skill_pts = 1;  /* start with 1 point to spend */
-
-    /* Build the procedural skill tree */
-    skilltree_generate(&c->tree, c->type, seed);
-    /* Root node always starts unlocked */
-    NODE_UNLOCK(c->tree.nodes[0]);
+    creature_heal(c);
 }
 
-/* ---- Level up --------------------------------------------- */
+/* ── Calculate derived stats ───────────────────────────────── */
+void creature_calc_stats(Creature *c) {
+    const SpeciesData *base = &species_table[c->species];
+    uint8_t i;
+    uint16_t hp, atk, def, spd, sp;
 
-uint8_t creature_level_up(Creature *c) {
-    uint16_t old_max;
+    /* Base + level scaling (use uint16_t to prevent overflow) */
+    hp  = (uint16_t)base->hp  + (uint16_t)c->level * 3;
+    atk = (uint16_t)base->atk + (uint16_t)c->level * 2;
+    def = (uint16_t)base->def + (uint16_t)c->level * 2;
+    spd = (uint16_t)base->spd + (uint16_t)c->level;
+    sp  = 10 + (uint16_t)c->level * 2;
 
-    if (c->level >= MAX_LEVEL) return c->level;
-
-    c->level++;
-    c->exp     -= c->exp_next;
-    c->exp_next = creature_exp_for_level(c->level + 1);
-
-    old_max = c->max_hp;
-    creature_calc_stats(c);
-
-    /* Heal by the amount max HP increased */
-    c->hp += (c->max_hp - old_max);
-    if (c->hp > c->max_hp) c->hp = c->max_hp;
-
-    /* Grant a skill point every 2 levels */
-    if ((c->level & 1u) == 0) {
-        c->skill_pts++;
+    /* Apply skill bonuses */
+    for (i = 0; i < c->num_skills; i++) {
+        switch (c->skills[i]) {
+            case MSKILL_ATK_UP:       atk += 2; break;
+            case MSKILL_DEF_UP:       def += 2; break;
+            case MSKILL_SPD_UP:       spd += 2; break;
+            case MSKILL_HP_UP:        hp  += 5; break;
+            case MSKILL_TOUGHNESS:    hp  += 10; break;
+            case MSKILL_QUICK_STRIKE: spd += 3; break;
+        }
     }
-    return c->level;
+
+    /* Clamp to uint8_t range */
+    c->max_hp = (hp  > 255) ? 255 : (uint8_t)hp;
+    c->atk    = (atk > 255) ? 255 : (uint8_t)atk;
+    c->def    = (def > 255) ? 255 : (uint8_t)def;
+    c->spd    = (spd > 255) ? 255 : (uint8_t)spd;
+    c->max_sp = (sp  > 255) ? 255 : (uint8_t)sp;
 }
 
-void creature_gain_exp(Creature *c, uint16_t amount) {
-    c->exp += amount;
-    while (c->exp >= c->exp_next && c->level < MAX_LEVEL) {
-        creature_level_up(c);
+/* ── Heal to full ──────────────────────────────────────────── */
+void creature_heal(Creature *c) {
+    c->hp = c->max_hp;
+    c->sp = c->max_sp;
+}
+
+/* ── Award XP ──────────────────────────────────────────────── */
+uint8_t creature_award_xp(Creature *c, uint16_t amount) {
+    c->xp += amount;
+    if (c->xp >= c->xp_next && c->level < MAX_LEVEL) {
+        c->level++;
+        c->xp = 0;
+        c->xp_next = creature_xp_for_level(c->level + 1);
+        creature_calc_stats(c);
+        creature_heal(c);
+        return 1;
     }
+    return 0;
+}
+
+/* ── Type effectiveness ────────────────────────────────────── */
+uint8_t type_effectiveness(uint8_t atk_type, uint8_t def_type) {
+    /* Normal is always neutral */
+    if (atk_type == ELEM_NORMAL || def_type == ELEM_NORMAL)
+        return 100;
+
+    /* Fire > Earth > Electric > Water > Fire */
+    if ((atk_type == ELEM_FIRE     && def_type == ELEM_EARTH) ||
+        (atk_type == ELEM_EARTH    && def_type == ELEM_ELECTRIC) ||
+        (atk_type == ELEM_ELECTRIC && def_type == ELEM_WATER) ||
+        (atk_type == ELEM_WATER    && def_type == ELEM_FIRE))
+        return 150;
+
+    if ((atk_type == ELEM_EARTH    && def_type == ELEM_FIRE) ||
+        (atk_type == ELEM_ELECTRIC && def_type == ELEM_EARTH) ||
+        (atk_type == ELEM_WATER    && def_type == ELEM_ELECTRIC) ||
+        (atk_type == ELEM_FIRE     && def_type == ELEM_WATER))
+        return 67;
+
+    /* Shadow <-> Light: both super effective */
+    if ((atk_type == ELEM_SHADOW && def_type == ELEM_LIGHT) ||
+        (atk_type == ELEM_LIGHT  && def_type == ELEM_SHADOW))
+        return 150;
+
+    /* Same type: not very effective */
+    if (atk_type == def_type)
+        return 75;
+
+    return 100;
+}
+
+/* ── STAB ──────────────────────────────────────────────────── */
+uint8_t type_stab(uint8_t creature_type, uint8_t move_type) {
+    if (move_type == ELEM_NORMAL) return 100;
+    return (creature_type == move_type) ? 125 : 100;
 }

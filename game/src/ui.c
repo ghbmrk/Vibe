@@ -1,377 +1,219 @@
-/*  ui.c  –  User-interface rendering for menus, text, HUD.
- *
- *  All rendering writes to the GBC background tile map.
- *  A custom 5x7 pixel font occupies tiles 0-44 in VRAM.
- *  UI chrome tiles (box borders, bars) occupy tiles 64-79.
- */
-
+/* ui.c - UI rendering */
 #include "ui.h"
 #include "gfx_data.h"
-#include "creature.h"
-#include "skilltree.h"
-#include <gb/gb.h>
-#include <gb/cgb.h>
-#include <string.h>
 
-/* ---- Helpers ---------------------------------------------- */
+static uint8_t prev_keys = 0;
 
-/* Convert an ASCII character to its tile index */
-static uint8_t char_to_tile(char c) {
-    if (c >= 'A' && c <= 'Z') return (uint8_t)(c - 'A') + TILE_FONT_A;
-    if (c >= 'a' && c <= 'z') return (uint8_t)(c - 'a') + TILE_FONT_A;
-    if (c >= '0' && c <= '9') return (uint8_t)(c - '0') + TILE_FONT_0;
-    if (c == '!') return TILE_FONT_BANG;
-    if (c == '?') return TILE_FONT_QMARK;
-    if (c == '.') return TILE_FONT_DOT;
-    if (c == '-') return TILE_FONT_DASH;
-    if (c == '/') return TILE_FONT_SLASH;
-    if (c == ':') return TILE_FONT_COLON;
-    if (c == '(') return TILE_FONT_LPAREN;
-    if (c == ')') return TILE_FONT_RPAREN;
-    if (c == '>') return TILE_ARROW_R;
-    return TILE_BLANK;   /* space / unknown */
-}
-
-/* ---- Initialisation --------------------------------------- */
-
-void ui_init(void) {
-    /* Load font tiles (0 .. FONT_TILE_COUNT-1) */
-    set_bkg_data(0, FONT_TILE_COUNT, font_tiles);
-
-    /* Load overworld tiles */
-    set_bkg_data(TILE_GRASS, OW_TILE_COUNT, overworld_tiles);
-
-    /* Load UI tiles */
-    set_bkg_data(TILE_BOX_TL, UI_TILE_COUNT, ui_tiles);
-
-    /* Load skill-tree tiles */
-    set_bkg_data(TILE_NODE_LOCK, ST_TILE_COUNT, skilltree_tiles);
-
-    /* Load player sprite tiles into OAM tile data */
-    set_sprite_data(STILE_PLAYER, 4, player_sprite);
-
-    /* Assign sprite tiles to OAM entries */
-    set_sprite_tile(SPR_PLAYER_0, STILE_PLAYER);
-    set_sprite_tile(SPR_PLAYER_1, STILE_PLAYER + 1);
-    set_sprite_tile(SPR_PLAYER_2, STILE_PLAYER + 2);
-    set_sprite_tile(SPR_PLAYER_3, STILE_PLAYER + 3);
-}
-
-/* ---- Screen clear ----------------------------------------- */
-
-void ui_clear(void) {
-    uint8_t row[MAP_W];
-    uint8_t y;
-    memset(row, TILE_BLANK, MAP_W);
-    for (y = 0; y < MAP_H; y++) {
-        set_bkg_tiles(0, y, MAP_W, 1, row);
+/* ── Character to tile mapping ─────────────────────────────── */
+uint8_t ui_char_to_tile(char c) {
+    if (c >= 'A' && c <= 'Z') return TILE_FONT_BASE + 1 + (c - 'A');
+    if (c >= 'a' && c <= 'z') return TILE_FONT_BASE + 1 + (c - 'a');
+    if (c >= '0' && c <= '9') return TILE_FONT_BASE + 27 + (c - '0');
+    switch (c) {
+        case ' ': return TILE_FONT_BASE;      /* 128 */
+        case '!': return TILE_FONT_BASE + 37;
+        case '?': return TILE_FONT_BASE + 38;
+        case '.': return TILE_FONT_BASE + 39;
+        case ',': return TILE_FONT_BASE + 40;
+        case ':': return TILE_FONT_BASE + 41;
+        case '-': return TILE_FONT_BASE + 42;
+        case '/': return TILE_FONT_BASE + 43;
+        case '+': return TILE_FONT_BASE + 44;
+        case '=': return TILE_FONT_BASE + 45;
+        case '(': return TILE_FONT_BASE + 46;
+        case ')': return TILE_FONT_BASE + 47;
+        case '\'': return TILE_FONT_BASE + 48;
+        case '%': return TILE_FONT_BASE + 49;
+        case '#': return TILE_FONT_BASE + 50;
+        case '>': return TILE_FONT_BASE + 51;
+        case '<': return TILE_FONT_BASE + 52;
+        case '$': return TILE_FONT_BASE + 53;
+        case '@': return TILE_FONT_BASE + 54;
+        case '*': return TILE_FONT_BASE + 55;
+        default:  return TILE_FONT_BASE;       /* space for unknown */
     }
-    /* Reset palette attributes to palette 0 */
-    memset(row, 0, MAP_W);
-    VBK_REG = 1;
-    for (y = 0; y < MAP_H; y++) {
-        set_bkg_tiles(0, y, MAP_W, 1, row);
-    }
-    VBK_REG = 0;
 }
 
-/* ---- Text printing ---------------------------------------- */
-
+/* ── Print string ──────────────────────────────────────────── */
 void ui_print(uint8_t x, uint8_t y, const char *str) {
-    uint8_t buf[MAP_W];
-    uint8_t i = 0;
-    while (*str && i < MAP_W) {
-        buf[i] = char_to_tile(*str);
+    while (*str) {
+        uint8_t tile = ui_char_to_tile(*str);
+        set_bkg_tile_xy(x, y, tile);
+        x++;
+        if (x >= SCREEN_W) break;
         str++;
-        i++;
-    }
-    if (i > 0) {
-        set_bkg_tiles(x, y, i, 1, buf);
     }
 }
 
+/* ── Print number ──────────────────────────────────────────── */
 void ui_print_num(uint8_t x, uint8_t y, uint16_t num) {
     char buf[6];
-    uint8_t i = 5;
-
+    int8_t i = 4;
     buf[5] = '\0';
+
     if (num == 0) {
-        buf[--i] = '0';
+        buf[4] = '0';
+        i = 3;
     } else {
-        while (num > 0 && i > 0) {
-            buf[--i] = '0' + (char)(num % 10u);
-            num /= 10u;
+        while (num > 0 && i >= 0) {
+            buf[i + 1] = '0' + (num % 10);
+            num /= 10;
+            if (num > 0) i--;
         }
     }
-    ui_print(x, y, &buf[i]);
+    ui_print(x, y, &buf[i + 1]);
 }
 
-/* ---- Box drawing ------------------------------------------ */
-
+/* ── Draw box ──────────────────────────────────────────────── */
 void ui_draw_box(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
-    uint8_t row[MAP_W];
-    uint8_t i, iy;
+    uint8_t i, j;
+    uint8_t x2 = x + w - 1;
+    uint8_t y2 = y + h - 1;
 
-    if (w > MAP_W) w = MAP_W;
+    /* Corners */
+    set_bkg_tile_xy(x,  y,  TILE_BOX_TL);
+    set_bkg_tile_xy(x2, y,  TILE_BOX_TR);
+    set_bkg_tile_xy(x,  y2, TILE_BOX_BL);
+    set_bkg_tile_xy(x2, y2, TILE_BOX_BR);
 
-    /* Top border */
-    row[0] = TILE_BOX_TL;
-    for (i = 1; i < w - 1; i++) row[i] = TILE_BOX_T;
-    row[w - 1] = TILE_BOX_TR;
-    set_bkg_tiles(x, y, w, 1, row);
-
-    /* Middle rows */
-    row[0] = TILE_BOX_L;
-    for (i = 1; i < w - 1; i++) row[i] = TILE_BOX_MID;
-    row[w - 1] = TILE_BOX_R;
-    for (iy = 1; iy < h - 1; iy++) {
-        set_bkg_tiles(x, y + iy, w, 1, row);
+    /* Horizontal edges */
+    for (i = x + 1; i < x2; i++) {
+        set_bkg_tile_xy(i, y,  TILE_BOX_H);
+        set_bkg_tile_xy(i, y2, TILE_BOX_H);
     }
 
-    /* Bottom border */
-    row[0] = TILE_BOX_BL;
-    for (i = 1; i < w - 1; i++) row[i] = TILE_BOX_B;
-    row[w - 1] = TILE_BOX_BR;
-    set_bkg_tiles(x, y + h - 1, w, 1, row);
+    /* Vertical edges */
+    for (j = y + 1; j < y2; j++) {
+        set_bkg_tile_xy(x,  j, TILE_BOX_V);
+        set_bkg_tile_xy(x2, j, TILE_BOX_V);
+    }
+
+    /* Fill interior */
+    for (j = y + 1; j < y2; j++) {
+        for (i = x + 1; i < x2; i++) {
+            set_bkg_tile_xy(i, j, TILE_FONT_BASE); /* space */
+        }
+    }
 }
 
-/* ---- HP bar ----------------------------------------------- */
-
-void ui_draw_hp_bar(uint8_t x, uint8_t y, uint16_t current, uint16_t max) {
-    uint8_t bar[10];
+/* ── HP bar ────────────────────────────────────────────────── */
+void ui_draw_hp_bar(uint8_t x, uint8_t y, uint8_t cur, uint8_t max,
+                    uint8_t w) {
     uint8_t filled, i;
-
     if (max == 0) max = 1;
-    filled = (uint8_t)((uint16_t)current * 10u / max);
-    if (filled > 10) filled = 10;
-    if (current > 0 && filled == 0) filled = 1;  /* show sliver */
+    filled = (uint8_t)(((uint16_t)cur * (uint16_t)w) / (uint16_t)max);
+    if (cur > 0 && filled == 0) filled = 1;
 
-    for (i = 0; i < 10; i++) {
-        if (i < filled)     bar[i] = TILE_HP_FULL;
-        else if (i == filled) bar[i] = TILE_HP_MID;
-        else                bar[i] = TILE_HP_EMPTY;
+    for (i = 0; i < w; i++) {
+        set_bkg_tile_xy(x + i, y, (i < filled) ? TILE_HP_FULL : TILE_HP_EMPTY);
     }
-    set_bkg_tiles(x, y, 10, 1, bar);
 }
 
-/* ---- Skill tree visualisation ----------------------------- */
-
-void ui_draw_skill_tree(const Creature *c, uint8_t selected) {
-    const SkillTree *tree = &c->tree;
-    uint8_t i, px, py;
-    uint8_t node_x[MAX_SKILL_NODES];
-    uint8_t node_y[MAX_SKILL_NODES];
-    const SkillNode *n;
-    char namebuf[SKILL_NAME_LEN];
-
-    ui_clear();
-
-    /* Header */
-    ui_print(1, 0, c->name);
-    ui_print(10, 0, "SKILL TREE");
-    ui_print(1, 1, "PTS:");
-    ui_print_num(5, 1, c->skill_pts);
-
-    /* Layout nodes in a simple top-down arrangement.
-     * Root at top centre; children spread below. */
-
-    /* Pass 1: assign positions based on parent relationships */
-    memset(node_x, 10, MAX_SKILL_NODES);  /* default centre */
-    memset(node_y, 3,  MAX_SKILL_NODES);
-
-    /* Root */
-    node_x[0] = 10;
-    node_y[0] = 3;
-
-    /* Simple layout: each node is placed relative to parent */
-    {
-        uint8_t col_offset = 0;
-        uint8_t last_parent = 0xFF;
-        for (i = 1; i < tree->count; i++) {
-            n = &tree->nodes[i];
-            if (n->parent != last_parent) {
-                col_offset += 6;
-                last_parent = n->parent;
-            }
-            node_x[i] = 2 + (col_offset % 18);
-            node_y[i] = node_y[n->parent] + 2;
-            if (node_y[i] > 13) node_y[i] = 13;
-        }
-    }
-
-    /* Pass 2: draw connecting lines */
-    for (i = 1; i < tree->count; i++) {
-        n = &tree->nodes[i];
-        if (n->parent != 0xFF && n->parent < tree->count) {
-            /* Draw a vertical line segment */
-            py = node_y[n->parent] + 1;
-            px = node_x[n->parent];
-            if (py < node_y[i]) {
-                uint8_t ltile = TILE_LINE_V;
-                set_bkg_tiles(px, py, 1, 1, &ltile);
-            }
-        }
-    }
-
-    /* Pass 3: draw nodes */
-    for (i = 0; i < tree->count; i++) {
-        uint8_t tile;
-        n = &tree->nodes[i];
-        if (i == selected) {
-            tile = TILE_NODE_SEL;
-        } else if (NODE_UNLOCKED(*n)) {
-            tile = TILE_NODE_OPEN;
-        } else {
-            tile = TILE_NODE_LOCK;
-        }
-        set_bkg_tiles(node_x[i], node_y[i], 1, 1, &tile);
-    }
-
-    /* Bottom panel: show details of selected node */
-    ui_draw_box(0, 14, 20, 4);
-    n = &tree->nodes[selected];
-
-    if (NODE_NTYPE(*n) != NTYPE_NORMAL) {
-        /* Keystone node: show type name + effect */
-        ui_print(1, 15, skilltree_ntype_name(NODE_NTYPE(*n)));
-        if (NODE_IS_PASSIVE(*n)) {
-            ui_print(11, 15, "PASSIVE");
-        } else {
-            ui_print(11, 15, skilltree_cat_tag(n->category));
-            ui_print(15, 15, "P:");
-            ui_print_num(17, 15, n->power);
-        }
-        ui_print(1, 16, skilltree_ntype_desc(NODE_NTYPE(*n)));
-        ui_print(14, 16, "LV:");
-        ui_print_num(17, 16, n->req_level);
-    } else {
-        /* Normal skill node */
-        skilltree_skill_name(namebuf, n->element, n->category, selected & 3);
-        ui_print(1, 15, namebuf);
-
-        ui_print(1, 16, "PWR:");
-        ui_print_num(5, 16, n->power);
-        ui_print(8, 16, "SP:");
-        ui_print_num(11, 16, n->cost);
-        ui_print(14, 16, "LV:");
-        ui_print_num(17, 16, n->req_level);
-    }
-
-    /* Status line */
-    if (NODE_UNLOCKED(*n)) {
-        ui_print(1, 17, "UNLOCKED");
-    } else if (skilltree_can_unlock(&c->tree, selected, c->level)) {
-        ui_print(1, 17, "A:UNLOCK");
-    } else {
-        ui_print(1, 17, "LOCKED");
-    }
-
-    /* Element + respec hint */
-    ui_print(10, 17, type_names[n->element]);
-    ui_print(16, 17, "SE:R");
+void ui_draw_sp_bar(uint8_t x, uint8_t y, uint8_t cur, uint8_t max,
+                    uint8_t w) {
+    /* Same visual as HP bar for now */
+    ui_draw_hp_bar(x, y, cur, max, w);
 }
 
-/* ---- Title screen ----------------------------------------- */
-
-void ui_draw_title(void) {
-    ui_clear();
-    ui_draw_box(2, 2, 16, 6);
-    ui_print(4, 4, "CREATURE");
-    ui_print(4, 5, "COLLECTOR");
-    ui_print(3, 9,  "FOR CHROMATIC");
-    ui_print(4, 12, "PRESS START");
-    ui_print(3, 16, "2025 HOMEBREW");
+/* ── Clear rect ────────────────────────────────────────────── */
+void ui_clear_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
+    uint8_t i, j;
+    for (j = 0; j < h; j++) {
+        for (i = 0; i < w; i++) {
+            set_bkg_tile_xy(x + i, y + j, TILE_FONT_BASE);
+        }
+    }
 }
 
-/* ---- Starter selection ------------------------------------ */
+void ui_clear_screen(void) {
+    ui_clear_rect(0, 0, SCREEN_W, SCREEN_H);
+}
 
-void ui_draw_starter(uint8_t sel) {
+/* ── Debounced key polling ─────────────────────────────────── */
+uint8_t ui_poll_keys(void) {
+    uint8_t keys = joypad();
+    uint8_t pressed = keys & ~prev_keys;
+    prev_keys = keys;
+    return pressed;
+}
+
+/* ── Wait for button press ─────────────────────────────────── */
+void ui_wait_press(void) {
+    /* Wait for release first */
+    while (joypad()) {
+        wait_vbl_done();
+    }
+    /* Wait for press */
+    while (!joypad()) {
+        wait_vbl_done();
+    }
+    /* Wait for release */
+    while (joypad()) {
+        wait_vbl_done();
+    }
+}
+
+/* ── Message box ───────────────────────────────────────────── */
+void ui_message(const char *line1, const char *line2) {
+    ui_draw_box(0, 13, 20, 5);
+    ui_print(1, 14, line1);
+    if (line2) {
+        ui_print(1, 15, line2);
+    }
+    ui_print(17, 16, "...");
+    ui_wait_press();
+}
+
+/* ── Menu ──────────────────────────────────────────────────── */
+uint8_t ui_menu(uint8_t x, uint8_t y, const char *const options[],
+                uint8_t count) {
+    uint8_t sel = 0;
     uint8_t i;
-    ui_clear();
-    ui_print(2, 0, "CHOOSE YOUR STARTER");
-    ui_draw_box(1, 2, 18, 14);
+    uint8_t pressed;
 
-    for (i = 0; i < 3; i++) {
-        const SpeciesData *sp = &species_table[i];
-        uint8_t y = 4 + i * 4;
+    /* Draw options */
+    for (i = 0; i < count; i++) {
+        ui_print(x + 2, y + i, options[i]);
+    }
 
-        /* Arrow for selection */
-        if (i == sel) ui_print(2, y, ">");
+    for (;;) {
+        /* Draw cursor */
+        for (i = 0; i < count; i++) {
+            set_bkg_tile_xy(x, y + i,
+                            (i == sel) ? TILE_CURSOR : TILE_FONT_BASE);
+        }
 
-        /* Name and type */
-        ui_print(4, y, sp->name);
-        ui_print(13, y, type_names[sp->type]);
+        wait_vbl_done();
+        pressed = ui_poll_keys();
 
-        /* Base stats */
-        ui_print(4, y + 1, "HP:");
-        ui_print_num(7, y + 1, sp->base_hp);
-        ui_print(10, y + 1, "ATK:");
-        ui_print_num(14, y + 1, sp->base_atk);
-
-        ui_print(4, y + 2, "DEF:");
-        ui_print_num(8, y + 2, sp->base_def);
-        ui_print(11, y + 2, "SPD:");
-        ui_print_num(15, y + 2, sp->base_spd);
+        if (pressed & J_UP) {
+            if (sel > 0) sel--;
+        }
+        if (pressed & J_DOWN) {
+            if (sel < count - 1) sel++;
+        }
+        if (pressed & J_A) {
+            return sel;
+        }
+        if (pressed & J_B) {
+            return 0xFF; /* cancel */
+        }
     }
 }
 
-/* ---- In-game menu ----------------------------------------- */
+/* ── Set palette for a region ──────────────────────────────── */
+void ui_set_palette_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
+                         uint8_t pal) {
+    uint8_t i, j;
+    uint8_t attr_row[20];
 
-void ui_draw_game_menu(uint8_t sel) {
-    ui_clear();
-    ui_draw_box(2, 1, 16, 14);
-    ui_print(6, 2, "MENU");
-    ui_print(4, 4,  "PARTY");
-    ui_print(4, 6,  "SKILL TREE");
-    ui_print(4, 8,  "SAVE");
-    ui_print(4, 10, "CLOSE");
-
-    /* Selection arrow */
-    ui_print(3, 4 + sel * 2, ">");
-}
-
-/* ---- Party summary ---------------------------------------- */
-
-void ui_draw_party(uint8_t sel) {
-    uint8_t i, y;
-    ui_clear();
-    ui_print(2, 0, "PARTY");
-    ui_draw_box(0, 1, 20, 16);
-
-    for (i = 0; i < party_count; i++) {
-        Creature *c = &party[i];
-        y = 2 + i * 4;
-
-        if (i == sel) ui_print(1, y, ">");
-        ui_print(3, y, c->name);
-        ui_print(13, y, "LV");
-        ui_print_num(15, y, c->level);
-        ui_print(3, y + 1, type_names[c->type]);
-        ui_print(3, y + 2, "HP:");
-        ui_print_num(6, y + 2, c->hp);
-        ui_print(10, y + 2, "/");
-        ui_print_num(11, y + 2, c->max_hp);
+    for (i = 0; i < w && i < 20; i++) {
+        attr_row[i] = pal;
     }
-
-    if (party_count == 0) {
-        ui_print(3, 6, "NO CREATURES");
-    }
-
-    ui_print(3, 15, "B:BACK  A:SKILLS");
-}
-
-/* ---- GBC palette attributes ------------------------------- */
-
-void ui_set_palette_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t pal) {
-    uint8_t row[MAP_W];
-    uint8_t iy;
-
-    if (w > MAP_W) w = MAP_W;
-    memset(row, pal & 0x07u, w);
 
     VBK_REG = 1;
-    for (iy = 0; iy < h; iy++) {
-        set_bkg_tiles(x, y + iy, w, 1, row);
+    for (j = 0; j < h; j++) {
+        set_bkg_tiles(x, y + j, w, 1, attr_row);
     }
     VBK_REG = 0;
 }

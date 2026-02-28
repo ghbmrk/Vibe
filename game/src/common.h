@@ -1,276 +1,269 @@
+/* common.h - Shared types, constants, macros for IMPERIAL HUNT */
 #ifndef COMMON_H
 #define COMMON_H
 
-/*  common.h  –  Shared types, constants and macros
- *  for the Creature Collector GBC game.
- */
-
 #include <gb/gb.h>
+#include <gb/cgb.h>
 #include <stdint.h>
+#include <string.h>
 
-/* ======== Game states (main state machine) ================ */
-#define STATE_TITLE       0
-#define STATE_STARTER     1
-#define STATE_OVERWORLD   2
-#define STATE_BATTLE      3
-#define STATE_MENU        4
-#define STATE_SKILLTREE   5
+/* ── Screen dimensions ─────────────────────────────────────── */
+#define SCREEN_W    20
+#define SCREEN_H    18
+#define MAP_W       32
+#define MAP_H       32
 
-/* ======== Creature element types ========================== */
-#define TYPE_FLAME   0
-#define TYPE_AQUA    1
-#define TYPE_TERRA   2
-#define TYPE_VOLT    3
-#define TYPE_SHADOW  4
-#define TYPE_AETHER  5
-#define NUM_TYPES    6
+/* ── Tile index assignments ────────────────────────────────── */
+/* Terrain (BG tiles 16-31) */
+#define TILE_GRASS       16
+#define TILE_TALL_GRASS  17
+#define TILE_WALL        18
+#define TILE_PATH        19
+#define TILE_WATER       20
+#define TILE_DOOR        21
+#define TILE_GYM_FLOOR   22
+#define TILE_BOSS_MARK   23
+#define TILE_VENDOR      24
+#define TILE_ROCK        25
 
-/* ======== Skill categories ================================ */
-#define SKILL_ATTACK   0
-#define SKILL_DEFEND   1
-#define SKILL_SUPPORT  2
-#define SKILL_SPECIAL  3
-#define NUM_SKILL_CATS 4
-
-/* ======== Skill node types (keystones) =================== */
-/* Stored in SkillNode.flags bits 1-4.                        */
-#define NTYPE_NORMAL      0
-/* Passive keystones – always active once unlocked            */
-#define NTYPE_THORNS      1   /* reflect 25% damage taken      */
-#define NTYPE_BERSERK     2   /* +ATK as HP drops              */
-#define NTYPE_REGEN       3   /* heal 5% max HP per turn       */
-#define NTYPE_GLASS       4   /* +50% ATK, -30% DEF            */
-#define NTYPE_SWIFT       5   /* always act first              */
-#define NTYPE_MASTERY     6   /* super effective = 2x          */
-#define NTYPE_LAST_STAND  7   /* survive one lethal hit/battle */
-#define NTYPE_FORTRESS    8   /* DEF boosts persist all battle */
-/* Enhanced active – usable in battle with bonus effect       */
-#define NTYPE_VAMPIRIC    9   /* heal 25% of damage dealt      */
-#define NTYPE_LEECH_SP   10   /* recover half SP cost on use   */
-#define NTYPE_MULTICAST  11   /* 30% chance to double-cast     */
-#define NTYPE_DRAIN      12   /* also drain target SP          */
-#define NUM_NTYPES       13
-
-/* ======== Battle sub-states =============================== */
-#define BSTATE_INIT           0
-#define BSTATE_PLAYER_MENU    1
-#define BSTATE_SELECT_SKILL   2
-#define BSTATE_PLAYER_ACT     3
-#define BSTATE_ENEMY_ACT      4
-#define BSTATE_CHECK          5
-#define BSTATE_VICTORY        6
-#define BSTATE_DEFEAT         7
-#define BSTATE_CATCH_TRY      8
-#define BSTATE_RUN            9
-#define BSTATE_DONE          10
-#define BSTATE_SWAP          11
-
-/* ======== Limits ========================================== */
-#define MAX_PARTY        4
-#define MAX_SKILL_NODES  20
-#define MAX_ACTIVE_SKILLS 8
-#define MAX_SPECIES      6
-#define MAX_LEVEL        50
-#define NAME_LEN         9
-#define SKILL_NAME_LEN  13       /* max display name for skills */
-
-/* ======== Map dimensions (per screen) ===================== */
-#define MAP_W  20
-#define MAP_H  18
-
-/* ======== Tile index layout in VRAM ======================= */
-/*  0        = blank / space                                   */
-/*  1  - 26  = font  A-Z                                       */
-/*  27 - 36  = font  0-9                                       */
-/*  37 - 44  = font  punctuation  ! ? . - / : ( )              */
-/*  48 - 63  = overworld tiles                                 */
-/*  64 - 79  = UI tiles (box borders, HP bar, etc.)            */
-/*  80 - 95  = skill-tree tiles                                */
-/*  128-255  = creature battle sprites (loaded per-battle)     */
-
-#define TILE_BLANK       0
-
-/* Font range */
-#define TILE_FONT_START  1
-#define TILE_FONT_A      1
-#define TILE_FONT_0      27
-#define TILE_FONT_BANG   37
-#define TILE_FONT_QMARK  38
-#define TILE_FONT_DOT    39
-#define TILE_FONT_DASH   40
-#define TILE_FONT_SLASH  41
-#define TILE_FONT_COLON  42
-#define TILE_FONT_LPAREN 43
-#define TILE_FONT_RPAREN 44
-#define FONT_TILE_COUNT  45      /* tiles 0..44 */
-
-/* Overworld tiles */
-#define TILE_GRASS       48
-#define TILE_TALLGRASS   49
-#define TILE_PATH        50
-#define TILE_WATER       51
-#define TILE_TREE_TL     52
-#define TILE_TREE_TR     53
-#define TILE_TREE_BL     54
-#define TILE_TREE_BR     55
-#define TILE_ROCK        56
-#define TILE_FENCE_H     57
-#define TILE_FENCE_V     58
-#define TILE_DOOR        59
-#define TILE_ROOF        60
-#define TILE_WALL        61
-#define TILE_FLOWER      62
-#define TILE_SIGN        63
-#define OW_TILE_COUNT    16       /* 48..63 */
-
-/* UI tiles */
-#define TILE_BOX_TL      64
-#define TILE_BOX_T       65
+/* UI (BG tiles 64-79) */
+#define TILE_BLANK       64
+#define TILE_BOX_TL      65
 #define TILE_BOX_TR      66
-#define TILE_BOX_L       67
-#define TILE_BOX_MID     68
-#define TILE_BOX_R       69
-#define TILE_BOX_BL      70
-#define TILE_BOX_B       71
-#define TILE_BOX_BR      72
-#define TILE_HP_FULL     73
-#define TILE_HP_MID      74
-#define TILE_HP_EMPTY    75
-#define TILE_ARROW_R     76
-#define TILE_ARROW_D     77
-#define TILE_SEL_L       78
-#define TILE_SEL_R       79
-#define UI_TILE_COUNT    16       /* 64..79 */
+#define TILE_BOX_BL      67
+#define TILE_BOX_BR      68
+#define TILE_BOX_H       69
+#define TILE_BOX_V       70
+#define TILE_HP_FULL     71
+#define TILE_HP_EMPTY    72
+#define TILE_HP_LCAP     73
+#define TILE_HP_RCAP     74
+#define TILE_CURSOR      75
+#define TILE_FILL        76
 
-/* Skill-tree tiles */
-#define TILE_NODE_LOCK   80
-#define TILE_NODE_OPEN   81
-#define TILE_NODE_SEL    82
-#define TILE_LINE_H      83
-#define TILE_LINE_V      84
-#define TILE_BRANCH_DL   85
-#define TILE_BRANCH_DR   86
-#define TILE_NODE_ROOT   87
-#define ST_TILE_COUNT     8       /* 80..87 */
+/* Creature battle sprites (BG tiles 32-63) */
+#define TILE_CREATURE1   32   /* player creature 4x4 */
+#define TILE_CREATURE2   48   /* enemy creature 4x4 */
 
-/* Creature battle sprites – loaded dynamically */
-#define TILE_CREA_BASE  128
-#define CREA_SPRITE_TILES 16     /* 4x4 tiles = 32x32 px */
+/* Font (BG tiles 128-223) */
+#define TILE_FONT_BASE   128
+/* ' ' = 128, A-Z = 129-154, 0-9 = 155-164, punct = 165+ */
 
-/* OAM sprite indices */
-#define SPR_PLAYER_0     0
-#define SPR_PLAYER_1     1
-#define SPR_PLAYER_2     2
-#define SPR_PLAYER_3     3
-#define SPR_CURSOR       4
+/* Sprite tile indices (OAM) */
+#define SPR_TILE_PLAYER_DOWN   0
+#define SPR_TILE_PLAYER_UP     4
+#define SPR_TILE_PLAYER_SIDE   8
 
-/* Player sprite tile in sprite VRAM */
-#define STILE_PLAYER     0       /* tiles 0-3 */
+/* ── Element types ─────────────────────────────────────────── */
+#define ELEM_FIRE       0
+#define ELEM_WATER      1
+#define ELEM_EARTH      2
+#define ELEM_ELECTRIC   3
+#define ELEM_SHADOW     4
+#define ELEM_LIGHT      5
+#define ELEM_NORMAL     6
+#define ELEM_COUNT      7
 
-/* ======== Directions ====================================== */
-#define DIR_DOWN   0
-#define DIR_UP     1
-#define DIR_LEFT   2
-#define DIR_RIGHT  3
+/* ── Species ───────────────────────────────────────────────── */
+#define SP_EMBERON      0
+#define SP_TIDALIN      1
+#define SP_TERRAVOLT    2
+#define SP_ZAPPIX       3
+#define SP_SHADRIX      4
+#define SP_LUMINOS      5
+#define SP_COUNT        6
 
-/* ======== Data structures ================================= */
+/* ── Game states ───────────────────────────────────────────── */
+#define ST_TITLE        0
+#define ST_STARTER      1
+#define ST_OVERWORLD    2
+#define ST_BATTLE       3
+#define ST_SHOP         4
+#define ST_SKILLTREE    5
+#define ST_GAMEOVER     6
+#define ST_MENU         7
 
-/* Skill node in a creature's procedural skill tree */
+/* ── Battle sub-states ─────────────────────────────────────── */
+#define BS_INTRO        0
+#define BS_MENU         1
+#define BS_FIGHT_SEL    2
+#define BS_PLAYER_TURN  3
+#define BS_ENEMY_TURN   4
+#define BS_CHECK_KO     5
+#define BS_WIN          6
+#define BS_LOSE         7
+#define BS_CHOICE       8
+#define BS_CATCH        9
+#define BS_LEVELUP_CHAR 10
+#define BS_LEVELUP_CREA 11
+#define BS_RUN          12
+
+/* ── Gear ──────────────────────────────────────────────────── */
+#define GEAR_WEAPON     0
+#define GEAR_ARMOR      1
+#define GEAR_ACCESSORY  2
+#define GEAR_SLOTS      3
+#define GEAR_NONE       0xFF
+
+/* ── Directions ────────────────────────────────────────────── */
+#define DIR_DOWN        0
+#define DIR_UP          1
+#define DIR_LEFT        2
+#define DIR_RIGHT       3
+
+/* ── Max limits ────────────────────────────────────────────── */
+#define MAX_MOVES       4
+#define MAX_SKILLS      16
+#define MAX_LEVEL       50
+#define MAX_NAME_LEN    10
+#define MAX_GEAR_ITEMS  12
+
+/* ── Skill IDs (character) ─────────────────────────────────── */
+#define CSKILL_CHA_UP       0   /* +1 CHA */
+#define CSKILL_WIS_UP       1   /* +1 WIS */
+#define CSKILL_LCK_UP       2   /* +1 LCK */
+#define CSKILL_CON_UP       3   /* +1 CON */
+#define CSKILL_IRON_HALO    4   /* creature -10% dmg taken */
+#define CSKILL_BATTLE_CRY   5   /* creature +15% ATK 3 turns */
+#define CSKILL_TACTICAL     6   /* creature wins speed ties */
+#define CSKILL_VETERANS_EYE 7   /* +10% catch rate */
+#define CSKILL_BLESSED      8   /* creature ignores 10% DEF */
+#define CSKILL_EMPERORS_LT  9   /* +15% XP */
+#define CSKILL_WAR_TROPHY   10  /* +20% gold */
+#define CSKILL_ARTIFICER    11  /* gear bonuses +50% */
+#define CSKILL_COUNT        12
+
+/* ── Skill IDs (creature) ──────────────────────────────────── */
+#define MSKILL_ATK_UP       0   /* +2 ATK */
+#define MSKILL_DEF_UP       1   /* +2 DEF */
+#define MSKILL_SPD_UP       2   /* +2 SPD */
+#define MSKILL_HP_UP        3   /* +5 max HP */
+#define MSKILL_THICK_HIDE   4   /* -2 flat dmg taken */
+#define MSKILL_FURY         5   /* +25% ATK below 50% HP */
+#define MSKILL_REGEN        6   /* heal 5% per turn */
+#define MSKILL_TYPE_MASTERY 7   /* STAB +25% */
+#define MSKILL_EVASION      8   /* 10% dodge */
+#define MSKILL_TOUGHNESS    9   /* +10 max HP */
+#define MSKILL_COUNTER      10  /* reflect 20% melee */
+#define MSKILL_QUICK_STRIKE 11  /* +3 SPD */
+#define MSKILL_COUNT        12
+
+/* ── Move IDs ──────────────────────────────────────────────── */
+#define MOVE_TACKLE      0
+#define MOVE_EMBER        1
+#define MOVE_SPLASH       2
+#define MOVE_ROCKFALL     3
+#define MOVE_SPARK        4
+#define MOVE_HEX          5
+#define MOVE_FLASH        6
+#define MOVE_BLAZE        7
+#define MOVE_TORRENT      8
+#define MOVE_QUAKE        9
+#define MOVE_THUNDER     10
+#define MOVE_VOID        11
+#define MOVE_RADIANCE    12
+#define MOVE_INFERNO     13
+#define MOVE_TSUNAMI     14
+#define MOVE_TREMOR      15
+#define MOVE_SURGE       16
+#define MOVE_ECLIPSE     17
+#define MOVE_NOVA        18
+#define MOVE_STRIKE      19
+#define MOVE_SLAM        20
+#define MOVE_RUSH        21
+#define MOVE_COUNT       22
+
+/* ── Data structures ───────────────────────────────────────── */
+
 typedef struct {
-    uint8_t id;          /* 0 .. MAX_SKILL_NODES-1              */
-    uint8_t parent;      /* parent index, 0xFF = root           */
-    uint8_t category;    /* SKILL_ATTACK / DEFEND / SUPPORT / SPECIAL */
-    uint8_t element;     /* TYPE_FLAME … TYPE_AETHER            */
-    uint8_t power;       /* base power  1-99                    */
-    uint8_t cost;        /* SP cost in battle                   */
-    uint8_t req_level;   /* level required to unlock            */
-    uint8_t flags;       /* bit 0 = unlocked, bits 1-4 = ntype  */
-} SkillNode;
+    uint8_t type;       /* ELEM_ */
+    uint8_t power;
+    uint8_t accuracy;   /* 0-100 */
+    uint8_t sp_cost;
+} MoveData;
 
-/* Complete skill tree */
 typedef struct {
-    SkillNode nodes[MAX_SKILL_NODES];
-    uint8_t   count;     /* number of nodes actually used       */
-} SkillTree;
-
-/* A creature instance (party member or wild encounter) */
-typedef struct {
-    uint8_t   species;   /* 0..MAX_SPECIES-1                    */
-    uint8_t   type;      /* element type                        */
-    uint8_t   level;
-    uint16_t  hp;
-    uint16_t  max_hp;
-    uint8_t   atk;
-    uint8_t   def;
-    uint8_t   spd;
-    uint8_t   spc;       /* special stat                        */
-    uint16_t  exp;
-    uint16_t  exp_next;
-    uint8_t   skill_pts; /* unspent skill points                */
-    uint8_t   sp;        /* battle SP (spirit points)           */
-    uint8_t   sp_max;
-    uint16_t  tree_seed; /* deterministic seed for the tree     */
-    SkillTree tree;
-    char      name[NAME_LEN];
-} Creature;
-
-/* ROM-resident species base data */
-typedef struct {
-    char    name[NAME_LEN];
+    uint8_t hp, atk, def, spd;
     uint8_t type;
-    uint8_t base_hp;
-    uint8_t base_atk;
-    uint8_t base_def;
-    uint8_t base_spd;
-    uint8_t base_spc;
-    uint8_t catch_rate; /* 1-255, higher = easier to catch */
+    uint8_t start_move1, start_move2;
 } SpeciesData;
 
-/* SRAM save structure */
 typedef struct {
-    uint8_t   magic;          /* 0xCC = valid save                 */
-    uint8_t   party_count;
-    Creature  party[MAX_PARTY];
-    uint8_t   current_zone;
-    uint8_t   in_gym;
-    uint8_t   boss_beaten;
-    uint8_t   player_x;
-    uint8_t   player_y;
-    uint8_t   player_dir;
-    uint16_t  battles_won;
-    uint8_t   catches;
-    uint8_t   checksum;
-} SaveData;
+    uint8_t level;
+    uint16_t xp;
+    uint16_t xp_next;
+    uint8_t cha, wis, lck, con;
+    uint8_t gear[GEAR_SLOTS];  /* gear IDs or GEAR_NONE */
+    uint16_t gold;
+    uint8_t skills[MAX_SKILLS];
+    uint8_t num_skills;
+} Character;
 
-/* ======== Global game state (defined in main.c) =========== */
-extern uint8_t  game_state;
-extern uint8_t  party_count;
-extern Creature party[MAX_PARTY];
-extern uint8_t  current_zone;
-extern uint8_t  in_gym;
-extern uint8_t  boss_beaten;
-extern uint8_t  player_x;
-extern uint8_t  player_y;
-extern uint8_t  player_dir;
-extern uint16_t battles_won;
-extern uint8_t  total_catches;
-extern uint8_t  jpad;          /* current frame joypad state */
-extern uint8_t  jpad_prev;     /* previous frame joypad state */
+typedef struct {
+    uint8_t species;
+    uint8_t level;
+    uint16_t xp;
+    uint16_t xp_next;
+    uint8_t hp, max_hp;
+    uint8_t sp, max_sp;
+    uint8_t atk, def, spd;
+    uint8_t type;
+    uint8_t gear[GEAR_SLOTS];
+    uint8_t moves[MAX_MOVES];
+    uint8_t num_moves;
+    uint8_t skills[MAX_SKILLS];
+    uint8_t num_skills;
+} Creature;
 
-/* ======== Utility macros ================================== */
-#define NODE_UNLOCKED(n)     ((n).flags & 0x01u)
-#define NODE_UNLOCK(n)       ((n).flags |= 0x01u)
-#define NODE_LOCK(n)         ((n).flags &= (uint8_t)~0x01u)
-#define NODE_NTYPE(n)        (((n).flags >> 1) & 0x0Fu)
-#define NODE_SET_NTYPE(n, t) ((n).flags = (uint8_t)(((n).flags & 0xE1u) | (((t) & 0x0Fu) << 1)))
-#define NODE_IS_PASSIVE(n)   (NODE_NTYPE(n) >= 1u && NODE_NTYPE(n) <= 8u)
+typedef struct {
+    char name[MAX_NAME_LEN + 1];
+    uint16_t cost;
+    int8_t  bonus;       /* stat bonus value */
+    uint8_t slot;        /* GEAR_WEAPON/ARMOR/ACCESSORY */
+    uint8_t for_creature;/* 0=character, 1=creature */
+} GearDef;
 
-#define MIN(a,b) ((a) < (b) ? (a) : (b))
-#define MAX(a,b) ((a) > (b) ? (a) : (b))
+typedef struct {
+    uint8_t zone_num;
+    uint8_t theme;
+    uint8_t map[MAP_H][MAP_W];
+    uint8_t gym_map[SCREEN_H][SCREEN_W];
+    uint8_t entry_x, entry_y;
+    uint8_t gym_x, gym_y;
+    uint8_t boss_x, boss_y;
+    uint8_t base_level;
+    uint8_t boss_defeated;
+} ZoneData;
 
-/* Detect a fresh button press (went from 0→1 this frame) */
-#define PRESSED(key)  ((jpad & (key)) && !(jpad_prev & (key)))
+typedef struct {
+    uint8_t state;
+    Character player;
+    Creature creature;
+    ZoneData zone;
+    uint8_t px, py;          /* player position (tile coords) */
+    uint8_t dir;             /* facing direction */
+    uint8_t in_gym;
+    uint16_t battles_won;
+    uint16_t creatures_caught;
+    uint16_t rng_seed;
+} GameData;
 
-#define SAVE_MAGIC 0xCC
+/* ── Global game data (defined in main.c) ──────────────────── */
+extern GameData game;
+
+/* ── Palette indices ───────────────────────────────────────── */
+#define PAL_UI          0
+#define PAL_GRASS       1
+#define PAL_TREE        2
+#define PAL_PATH        3
+#define PAL_WATER       4
+#define PAL_GYM         5
+#define PAL_FIRE        6
+#define PAL_ACCENT      7
+
+/* ── Utility macros ────────────────────────────────────────── */
+#define MIN(a,b) ((a)<(b)?(a):(b))
+#define MAX(a,b) ((a)>(b)?(a):(b))
+#define ABS(a)   ((a)<0?-(a):(a))
 
 #endif /* COMMON_H */

@@ -1,30 +1,35 @@
+/* creature.h - Creature species, stats, moves */
 #ifndef CREATURE_H
 #define CREATURE_H
 
 #include "common.h"
 
-/* Species base data table (ROM) */
-extern const SpeciesData species_table[MAX_SPECIES];
+/* Species base stat lookup */
+extern const SpeciesData species_table[SP_COUNT];
+extern const MoveData    move_table[MOVE_COUNT];
+extern const char *const species_names[SP_COUNT];
+extern const char *const move_names[MOVE_COUNT];
+extern const char *const elem_names[ELEM_COUNT];
 
-/* Human-readable type names */
-extern const char *type_names[NUM_TYPES];
+/* Create a creature of given species at given level */
+void creature_create(Creature *c, uint8_t species, uint8_t level);
 
-/* Create a creature of given species / level with a random tree seed. */
-void creature_init(Creature *c, uint8_t species, uint8_t level, uint16_t seed);
-
-/* Recalculate derived stats (HP, ATK, DEF, SPD, SPC) from level + base. */
+/* Recalculate stats from base + level + gear + skills */
 void creature_calc_stats(Creature *c);
 
-/* Award experience; may trigger one or more level-ups. */
-void creature_gain_exp(Creature *c, uint16_t amount);
+/* Award XP; returns 1 if leveled up */
+uint8_t creature_award_xp(Creature *c, uint16_t amount);
 
-/* Perform a single level-up.  Returns new level. */
-uint8_t creature_level_up(Creature *c);
+/* XP needed for next level */
+uint16_t creature_xp_for_level(uint8_t level);
 
-/* Experience required to reach a given level. */
-uint16_t creature_exp_for_level(uint8_t level);
+/* Heal creature to full */
+void creature_heal(Creature *c);
 
-/* Type matchup: returns 0 = resisted, 1 = normal, 2 = super effective. */
+/* Type effectiveness: returns 150 for super, 67 for not very, 100 for neutral */
 uint8_t type_effectiveness(uint8_t atk_type, uint8_t def_type);
 
-#endif /* CREATURE_H */
+/* Get STAB (same-type attack bonus): 125 if match, else 100 */
+uint8_t type_stab(uint8_t creature_type, uint8_t move_type);
+
+#endif

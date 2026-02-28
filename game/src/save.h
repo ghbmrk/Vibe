@@ -1,15 +1,16 @@
+/* save.h - SRAM save/load */
 #ifndef SAVE_H
 #define SAVE_H
 
 #include "common.h"
 
-/* Check whether a valid save exists in SRAM. */
-uint8_t save_exists(void);
-
-/* Write current game state to SRAM. */
+/* Save current game state to SRAM */
 void save_game(void);
 
-/* Load game state from SRAM.  Returns 1 on success, 0 on failure. */
+/* Load game state from SRAM. Returns 1 if valid save found. */
 uint8_t load_game(void);
 
-#endif /* SAVE_H */
+/* Clear save data */
+void clear_save(void);
+
+#endif
