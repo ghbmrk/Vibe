@@ -41,10 +41,12 @@ void save_game(void) {
     for (i = 0; i < MAX_PARTY; i++) {
         memcpy(&tmp.party[i], &party[i], sizeof(Creature));
     }
-    tmp.current_map = current_map;
-    tmp.player_x    = player_x;
-    tmp.player_y    = player_y;
-    tmp.player_dir  = player_dir;
+    tmp.current_zone = current_zone;
+    tmp.in_gym       = in_gym;
+    tmp.boss_beaten  = boss_beaten;
+    tmp.player_x     = player_x;
+    tmp.player_y     = player_y;
+    tmp.player_dir   = player_dir;
     tmp.battles_won = battles_won;
     tmp.catches     = total_catches;
     tmp.checksum    = calc_checksum(&tmp);
@@ -69,7 +71,9 @@ uint8_t load_game(void) {
     for (i = 0; i < MAX_PARTY; i++) {
         memcpy(&party[i], &tmp.party[i], sizeof(Creature));
     }
-    current_map   = tmp.current_map;
+    current_zone  = tmp.current_zone;
+    in_gym        = tmp.in_gym;
+    boss_beaten   = tmp.boss_beaten;
     player_x      = tmp.player_x;
     player_y      = tmp.player_y;
     player_dir    = tmp.player_dir;

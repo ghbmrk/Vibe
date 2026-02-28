@@ -210,7 +210,9 @@ typedef struct {
     uint8_t   magic;          /* 0xCC = valid save                 */
     uint8_t   party_count;
     Creature  party[MAX_PARTY];
-    uint8_t   current_map;
+    uint8_t   current_zone;
+    uint8_t   in_gym;
+    uint8_t   boss_beaten;
     uint8_t   player_x;
     uint8_t   player_y;
     uint8_t   player_dir;
@@ -223,7 +225,9 @@ typedef struct {
 extern uint8_t  game_state;
 extern uint8_t  party_count;
 extern Creature party[MAX_PARTY];
-extern uint8_t  current_map;
+extern uint8_t  current_zone;
+extern uint8_t  in_gym;
+extern uint8_t  boss_beaten;
 extern uint8_t  player_x;
 extern uint8_t  player_y;
 extern uint8_t  player_dir;

@@ -31,6 +31,7 @@ SRCS = src/main.c \
        src/skilltree.c \
        src/sprite_gen.c \
        src/battle.c \
+       src/zone.c \
        src/world.c \
        src/ui.c \
        src/save.c \

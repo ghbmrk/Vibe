@@ -1,156 +1,29 @@
-/*  world.c  –  Overworld maps, player movement, and encounter generation.
+/*  world.c  –  Overworld rendering, movement, and zone transitions.
  *
- *  Each map is a 20x18 tile grid (one screen, no scrolling).
- *  Exits at the edges transition to the next map.
- *  Tall-grass tiles trigger random wild encounters.
+ *  Maps are procedurally generated per-zone by zone.c.
+ *  Each zone has an outside area and a gym (inside area).
+ *  The gym ends with a boss fight that unlocks the next zone.
  */
 
 #include "world.h"
+#include "zone.h"
 #include "ui.h"
 #include "rng.h"
-#include "gfx_data.h"
 #include <gb/gb.h>
+#include <gb/cgb.h>
 #include <string.h>
 
-/* ---- Map data (stored in ROM) ----------------------------- */
+/* Generated map data (RAM buffer, overwritten each load) */
+static uint8_t gen_map[MAP_H][MAP_W];
 
-/*  Tile legend (see common.h for tile indices):
- *   G = TILE_GRASS       g = TILE_TALLGRASS   P = TILE_PATH
- *   W = TILE_WATER       1 = TREE_TL 2 = TREE_TR
- *   3 = TREE_BL 4 = TREE_BR   R = TILE_ROCK
- *   H = TILE_FENCE_H     V = TILE_FENCE_V
- *   D = TILE_DOOR        r = TILE_ROOF   w = TILE_WALL
- *   F = TILE_FLOWER      S = TILE_SIGN
- *
- *   We store maps as uint8_t arrays using the actual tile indices.
- */
-
-#define G  TILE_GRASS
-#define g  TILE_TALLGRASS
-#define P  TILE_PATH
-#define W  TILE_WATER
-#define T1 TILE_TREE_TL
-#define T2 TILE_TREE_TR
-#define T3 TILE_TREE_BL
-#define T4 TILE_TREE_BR
-#define RK TILE_ROCK
-#define FH TILE_FENCE_H
-#define FV TILE_FENCE_V
-#define DR TILE_DOOR
-#define RF TILE_ROOF
-#define WL TILE_WALL
-#define FL TILE_FLOWER
-#define SN TILE_SIGN
-
-/* Map 0 – Starting Village */
-static const uint8_t map_village[MAP_H][MAP_W] = {
-    { T1,T2,G, G, G, G, G, G, T1,T2,G, G, G, G, G, T1,T2,G, G, G  },
-    { T3,T4,G, G, G, G, G, G, T3,T4,G, G, G, G, G, T3,T4,G, G, G  },
-    { G, G, G, G, RF,RF,RF,G, G, G, G, G, RF,RF,RF,G, G, G, G, G  },
-    { G, G, G, G, WL,DR,WL,G, G, G, G, G, WL,DR,WL,G, G, G, G, G  },
-    { G, G, G, G, G, P, G, G, G, G, G, G, G, P, G, G, G, G, G, G  },
-    { G, FL,G, G, G, P, G, G, G, FL,G, G, G, P, G, G, G, FL,G, G  },
-    { FH,FH,FH,P, P, P, P, P, P, P, P, P, P, P, P, P, FH,FH,FH,FH },
-    { G, G, G, P, G, G, G, G, G, G, G, G, G, G, G, P, G, G, G, G  },
-    { G, G, G, P, G, G, SN,G, G, G, G, G, G, G, G, P, G, G, G, G  },
-    { G, G, G, P, G, G, G, G, G, G, G, G, G, G, G, P, G, G, G, G  },
-    { T1,T2,G, P, G, G, G, G, G, g, g, g, G, G, G, P, G, T1,T2,G  },
-    { T3,T4,G, P, G, G, G, G, g, g, g, g, g, G, G, P, G, T3,T4,G  },
-    { G, G, G, P, G, G, G, G, g, g, g, g, g, G, G, P, G, G, G, G  },
-    { G, G, G, P, G, G, G, G, G, g, g, g, G, G, G, P, G, G, G, G  },
-    { G, G, G, P, G, G, G, G, G, G, G, G, G, G, G, P, G, G, G, G  },
-    { FH,FH,FH,P, P, P, P, P, P, P, P, P, P, P, P, P, FH,FH,FH,FH },
-    { G, G, G, G, G, G, G, G, G, P, G, G, G, G, G, G, G, G, G, G  },
-    { G, G, G, G, G, G, G, G, G, P, G, G, G, G, G, G, G, G, G, G  },
-};
-
-/* Map 1 – Route 1 (grasslands with tall grass) */
-static const uint8_t map_route1[MAP_H][MAP_W] = {
-    { G, G, G, G, G, G, G, G, G, P, G, G, G, G, G, G, G, G, G, G  },
-    { G, G, G, g, g, g, G, G, G, P, G, G, G, g, g, g, G, G, G, G  },
-    { G, G, g, g, g, g, g, G, G, P, G, G, g, g, g, g, g, G, G, G  },
-    { G, G, g, g, g, g, g, G, G, P, G, G, g, g, g, g, g, G, G, G  },
-    { G, G, G, g, g, g, G, G, G, P, G, G, G, g, g, g, G, G, G, G  },
-    { G, G, G, G, G, G, G, G, P, P, P, G, G, G, G, G, G, G, G, G  },
-    { T1,T2,G, G, G, G, G, G, P, G, P, G, G, G, G, G, G, T1,T2,G  },
-    { T3,T4,G, G, G, G, G, G, P, G, P, G, G, G, G, G, G, T3,T4,G  },
-    { G, G, G, g, g, g, g, P, P, G, P, P, g, g, g, g, G, G, G, G  },
-    { G, G, g, g, g, g, g, P, G, G, G, P, g, g, g, g, g, G, G, G  },
-    { G, G, g, g, g, g, g, P, G, RK,G, P, g, g, g, g, g, G, G, G  },
-    { G, G, G, g, g, g, G, P, G, G, G, P, G, g, g, g, G, G, G, G  },
-    { G, G, G, G, G, G, G, P, P, P, P, P, G, G, G, G, G, G, G, G  },
-    { T1,T2,G, G, G, G, G, G, G, P, G, G, G, G, G, G, G, T1,T2,G  },
-    { T3,T4,G, g, g, g, G, G, G, P, G, G, G, g, g, g, G, T3,T4,G  },
-    { G, G, g, g, g, g, g, G, G, P, G, G, g, g, g, g, g, G, G, G  },
-    { G, G, g, g, g, g, g, G, G, P, G, G, g, g, g, g, g, G, G, G  },
-    { G, G, G, g, g, g, G, G, G, P, G, G, G, g, g, g, G, G, G, G  },
-};
-
-/* Map 2 – Deep Forest (dense encounters, rare creatures) */
-static const uint8_t map_forest[MAP_H][MAP_W] = {
-    { T1,T2,T1,T2,G, G, G, G, G, P, G, G, G, G, T1,T2,T1,T2,T1,T2 },
-    { T3,T4,T3,T4,G, g, g, G, G, P, G, g, g, G, T3,T4,T3,T4,T3,T4 },
-    { T1,T2,G, G, g, g, g, g, G, P, G, g, g, g, g, G, G, T1,T2,G  },
-    { T3,T4,G, g, g, g, g, g, G, P, G, g, g, g, g, g, G, T3,T4,G  },
-    { G, G, g, g, g, g, g, g, P, P, P, g, g, g, g, g, g, G, G, G  },
-    { G, G, g, g, g, g, g, P, P, G, P, P, g, g, g, g, g, G, G, G  },
-    { T1,T2,g, g, g, g, G, P, G, G, G, P, G, g, g, g, T1,T2,G, G  },
-    { T3,T4,G, g, g, G, G, P, G, FL,G, P, G, G, g, g, T3,T4,G, G  },
-    { G, G, G, G, G, G, P, P, G, G, G, P, P, G, G, G, G, G, G, G  },
-    { T1,T2,G, G, G, P, P, G, G, RK,G, G, P, P, G, G, G, T1,T2,G  },
-    { T3,T4,G, G, P, P, G, g, g, G, g, g, G, P, P, G, G, T3,T4,G  },
-    { G, G, G, P, P, G, g, g, g, g, g, g, g, G, P, P, G, G, G, G  },
-    { G, G, P, P, G, g, g, g, g, g, g, g, g, g, G, P, P, G, G, G  },
-    { T1,T2,P, G, g, g, g, g, g, g, g, g, g, g, g, G, P, T1,T2,G  },
-    { T3,T4,P, G, G, g, g, g, g, g, g, g, g, g, G, G, P, T3,T4,G  },
-    { G, G, P, P, G, G, g, g, g, g, g, g, g, G, G, P, P, G, G, G  },
-    { T1,T2,G, P, P, G, G, G, G, P, G, G, G, G, P, P, G, T1,T2,G  },
-    { T3,T4,G, G, P, P, P, P, P, P, P, P, P, P, P, G, G, T3,T4,G  },
-};
-
-static const uint8_t (*maps[NUM_MAPS])[MAP_W] = {
-    map_village, map_route1, map_forest
-};
-
-/* Per-map encounter rates (out of 256 per step on tall grass) */
-static const uint8_t encounter_rates[NUM_MAPS] = { 15, 30, 45 };
-
-/* Per-map creature level ranges */
-static const uint8_t level_min[NUM_MAPS] = { 2, 3, 6 };
-static const uint8_t level_max[NUM_MAPS] = { 4, 7, 12 };
-
-/* Per-map available species (indices into species_table) */
-static const uint8_t species_pool_0[] = { 0, 1, 2 };
-static const uint8_t species_pool_1[] = { 0, 1, 2, 3 };
-static const uint8_t species_pool_2[] = { 3, 4, 5 };
-static const uint8_t *species_pools[NUM_MAPS] = {
-    species_pool_0, species_pool_1, species_pool_2
-};
-static const uint8_t pool_sizes[NUM_MAPS] = { 3, 4, 3 };
-
-/* Map exit definitions: { direction(0=up,1=down,2=left,3=right), dest_map, dest_x, dest_y } */
-#define MAX_EXITS 4
-typedef struct { uint8_t dir; uint8_t dest; uint8_t dx; uint8_t dy; } MapExit;
-
-static const MapExit exits_village[] = {
-    { DIR_DOWN, 1, 9, 0 },    /* south exit → route 1, top */
-};
-static const MapExit exits_route1[] = {
-    { DIR_UP,   0, 9, 17 },   /* north → village, bottom */
-    { DIR_DOWN, 2, 9, 0 },    /* south → forest, top */
-};
-static const MapExit exits_forest[] = {
-    { DIR_UP, 1, 9, 17 },     /* north → route 1, bottom */
-};
-static const MapExit *exit_table[NUM_MAPS] = {
-    exits_village, exits_route1, exits_forest
-};
-static const uint8_t exit_counts[NUM_MAPS] = { 1, 2, 1 };
+static uint8_t move_cooldown;
+static uint8_t pal_dirty;
+static uint8_t at_boss;   /* prevents boss re-trigger when standing on tile */
+#define MOVE_DELAY 6
 
 /* ---- Collision check -------------------------------------- */
 
 static uint8_t tile_is_solid(uint8_t tile) {
-    /* Trees, rocks, water, walls, fences, roofs are solid */
     if (tile == TILE_TREE_TL || tile == TILE_TREE_TR ||
         tile == TILE_TREE_BL || tile == TILE_TREE_BR) return 1;
     if (tile == TILE_ROCK)    return 1;
@@ -162,26 +35,31 @@ static uint8_t tile_is_solid(uint8_t tile) {
     return 0;
 }
 
-/* ---- State ------------------------------------------------ */
+/* ---- Zone-themed palette attributes ----------------------- */
 
-static uint8_t move_cooldown;   /* frames until next step allowed */
-static uint8_t pal_dirty;      /* 1 = palette attributes need refresh */
-#define MOVE_DELAY 6
-
-/* ---- Public functions ------------------------------------- */
-
-/* Assign GBC palette attributes to each tile based on tile type */
 static void world_set_palettes(void) {
     uint8_t x, y, tile, pal;
     uint8_t pal_row[MAP_W];
+    uint8_t theme = zone_get_theme(current_zone);
+
+    /* Theme accent palette for grass tiles */
+    uint8_t grass_pal;
+    switch (theme) {
+        case TYPE_FLAME:  grass_pal = 5; break;
+        case TYPE_AQUA:   grass_pal = 4; break;
+        case TYPE_TERRA:  grass_pal = 3; break;
+        case TYPE_VOLT:   grass_pal = 7; break;
+        case TYPE_SHADOW: grass_pal = 6; break;
+        default:          grass_pal = 1; break;
+    }
 
     VBK_REG = 1;
     for (y = 0; y < MAP_H; y++) {
         for (x = 0; x < MAP_W; x++) {
-            tile = maps[current_map][y][x];
+            tile = gen_map[y][x];
             switch (tile) {
                 case TILE_GRASS:
-                case TILE_FLOWER:     pal = 1; break;
+                case TILE_FLOWER:     pal = grass_pal; break;
                 case TILE_TALLGRASS:  pal = 2; break;
                 case TILE_PATH:
                 case TILE_DOOR:
@@ -202,16 +80,22 @@ static void world_set_palettes(void) {
     VBK_REG = 0;
 }
 
-void world_load(uint8_t map_id) {
-    current_map = map_id;
+/* ---- Public functions ------------------------------------- */
+
+void world_load_zone(void) {
+    if (in_gym) {
+        zone_gen_gym((uint8_t *)gen_map, current_zone);
+    } else {
+        zone_gen_outside((uint8_t *)gen_map, current_zone);
+    }
     move_cooldown = 0;
     pal_dirty = 1;
+    at_boss = 0;
 }
 
 uint8_t world_update(void) {
     int8_t dx = 0, dy = 0;
     uint8_t nx, ny, tile;
-    uint8_t i;
 
     if (move_cooldown) { move_cooldown--; return 0; }
 
@@ -226,23 +110,22 @@ uint8_t world_update(void) {
     nx = (uint8_t)((int8_t)player_x + dx);
     ny = (uint8_t)((int8_t)player_y + dy);
 
-    /* ---- Map edge / exit check ----------------------------- */
+    /* ---- Map edge check ------------------------------------ */
     if (nx >= MAP_W || ny >= MAP_H) {
-        /* Check exits */
-        for (i = 0; i < exit_counts[current_map]; i++) {
-            const MapExit *e = &exit_table[current_map][i];
-            if (e->dir == player_dir) {
-                world_load(e->dest);
-                player_x = e->dx;
-                player_y = e->dy;
-                return 0;
-            }
+        /* Going north off outside map with boss beaten → advance zone */
+        if (dy < 0 && !in_gym && boss_beaten) {
+            current_zone++;
+            boss_beaten = 0;
+            world_load_zone();
+            player_x = MAP_W / 2;
+            player_y = MAP_H - 2;
+            return 0;
         }
-        return 0;  /* no exit in this direction */
+        return 0;  /* blocked at all other edges */
     }
 
     /* ---- Collision ----------------------------------------- */
-    tile = maps[current_map][ny][nx];
+    tile = gen_map[ny][nx];
     if (tile_is_solid(tile)) return 0;
 
     /* Move the player */
@@ -250,10 +133,40 @@ uint8_t world_update(void) {
     player_y = ny;
     move_cooldown = MOVE_DELAY;
 
-    /* ---- Encounter check ----------------------------------- */
+    /* ---- Door transitions ---------------------------------- */
+    if (tile == TILE_DOOR) {
+        if (in_gym) {
+            /* Exit gym → return to outside at gym entrance */
+            in_gym = 0;
+            world_load_zone();
+            player_x = zone_gym_door_x();
+            player_y = zone_gym_door_y();
+            return 0;
+        } else {
+            /* Enter gym from outside */
+            in_gym = 1;
+            world_load_zone();
+            player_x = 9;
+            player_y = MAP_H - 4;
+            return 0;
+        }
+    }
+
+    /* ---- Boss encounter (gym only) ------------------------- */
+    if (in_gym && !boss_beaten &&
+        player_x == zone_boss_x() && player_y == zone_boss_y()) {
+        if (!at_boss) {
+            at_boss = 1;
+            return 2;  /* boss encounter */
+        }
+    } else {
+        at_boss = 0;
+    }
+
+    /* ---- Wild encounter check ------------------------------ */
     if (tile == TILE_TALLGRASS) {
-        if (rng_range(0, 255) < encounter_rates[current_map]) {
-            return 1;  /* wild encounter! */
+        if (rng_range(0, 255) < zone_get_encounter_rate(current_zone)) {
+            return 1;  /* wild encounter */
         }
     }
 
@@ -261,18 +174,16 @@ uint8_t world_update(void) {
 }
 
 void world_render(void) {
-    /* Draw map tiles to background */
-    set_bkg_tiles(0, 0, MAP_W, MAP_H,
-                  (const uint8_t *)maps[current_map]);
+    /* Draw generated map to background */
+    set_bkg_tiles(0, 0, MAP_W, MAP_H, (const uint8_t *)gen_map);
 
-    /* Apply palette attributes once after load or state transition */
+    /* Apply palette attributes on first render after load */
     if (pal_dirty) {
         world_set_palettes();
         pal_dirty = 0;
     }
 
-    /* Position player sprite (OAM).
-     * OAM coordinates are offset by (8, 16) on Game Boy. */
+    /* Position player sprite (OAM coordinates offset by 8,16) */
     move_sprite(SPR_PLAYER_0, player_x * 8u + 8u,      player_y * 8u + 16u);
     move_sprite(SPR_PLAYER_1, player_x * 8u + 8u + 8u,  player_y * 8u + 16u);
     move_sprite(SPR_PLAYER_2, player_x * 8u + 8u,      player_y * 8u + 16u + 8u);

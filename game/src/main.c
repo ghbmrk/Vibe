@@ -26,6 +26,7 @@
 #include "skilltree.h"
 #include "battle.h"
 #include "world.h"
+#include "zone.h"
 #include "ui.h"
 #include "save.h"
 #include "gfx_data.h"
@@ -35,7 +36,9 @@
 uint8_t  game_state;
 uint8_t  party_count;
 Creature party[MAX_PARTY];
-uint8_t  current_map;
+uint8_t  current_zone;
+uint8_t  in_gym;
+uint8_t  boss_beaten;
 uint8_t  player_x;
 uint8_t  player_y;
 uint8_t  player_dir;
@@ -81,37 +84,35 @@ static void setup_palettes(void) {
     set_sprite_prop(SPR_PLAYER_3, 0);
 }
 
-/* ---- Wild encounter generation ----------------------------- */
-/* Species pools and level ranges are defined in world.c;
- * we reproduce the extern data we need here via simple look-ups. */
+/* ---- Wild / boss encounter generation ----------------------- */
+
+static uint8_t is_boss_battle;   /* 1 when fighting a zone boss */
 
 static void generate_wild(void) {
     uint8_t species;
     uint8_t level;
+    uint8_t base_lvl;
     uint16_t seed;
 
-    /* Pick species from a small pool based on current map */
-    switch (current_map) {
-        case 0:  species = rng_range(0, 2); break;  /* starters */
-        case 1:  species = rng_range(0, 3); break;  /* + Zappix */
-        default: species = rng_range(3, 5); break;  /* rares    */
-    }
-
-    /* Level range per map */
-    switch (current_map) {
-        case 0:  level = rng_range(2, 4);  break;
-        case 1:  level = rng_range(3, 7);  break;
-        default: level = rng_range(6, 12); break;
-    }
+    species  = zone_random_species(current_zone);
+    base_lvl = zone_get_base_level(current_zone);
+    /* Wild level: base ± 2, minimum 2 */
+    level = (uint8_t)rng_range(
+        (uint16_t)(base_lvl > 2u ? base_lvl - 2u : 2u),
+        (uint16_t)(base_lvl + 2u));
 
     seed = rng_next();
     creature_init(&wild, species, level, seed);
 
-    /* Wild creatures have already made skill tree choices.
-     * Auto-unlock nodes based on level, then recalc stats with bonuses. */
+    /* Wild creatures have already made skill tree choices. */
     skilltree_auto_unlock(&wild.tree, level, seed);
+    wild.skill_pts = 0;
     creature_calc_stats(&wild);
     wild.hp = wild.max_hp;
+}
+
+static void generate_boss(void) {
+    zone_create_boss(&wild, current_zone);
 }
 
 /* ============================================================
@@ -185,7 +186,7 @@ void main(void) {
             if (PRESSED(J_START)) {
                 /* Try to load a save; if none, go to starter select */
                 if (save_exists() && load_game()) {
-                    world_load(current_map);
+                    world_load_zone();
                     game_state = STATE_OVERWORLD;
                 } else {
                     game_state = STATE_STARTER;
@@ -210,25 +211,40 @@ void main(void) {
                 party_count = 1;
                 creature_init(&party[0], menu_sel, 5, seed);
 
-                /* Start in the village */
-                current_map = 0;
+                /* Start in zone 0, outside area */
+                current_zone  = 0;
+                in_gym        = 0;
+                boss_beaten   = 0;
+                is_boss_battle = 0;
                 player_x = 9;
                 player_y = 8;
                 battles_won = 0;
                 total_catches = 0;
 
-                world_load(current_map);
+                world_load_zone();
                 game_state = STATE_OVERWORLD;
             }
             break;
 
         /* ---- OVERWORLD ------------------------------------- */
-        case STATE_OVERWORLD:
+        case STATE_OVERWORLD: {
+            uint8_t encounter;
             world_show_player();
 
-            if (world_update()) {
-                /* Wild encounter triggered! */
+            encounter = world_update();
+            if (encounter == 1) {
+                /* Wild encounter */
                 generate_wild();
+                is_boss_battle = 0;
+                world_hide_player();
+                battle_start(&wild);
+                game_state = STATE_BATTLE;
+                break;
+            }
+            if (encounter == 2) {
+                /* Boss encounter */
+                generate_boss();
+                is_boss_battle = 1;
                 world_hide_player();
                 battle_start(&wild);
                 game_state = STATE_BATTLE;
@@ -245,6 +261,7 @@ void main(void) {
 
             world_render();
             break;
+        }
 
         /* ---- BATTLE ---------------------------------------- */
         case STATE_BATTLE:
@@ -255,6 +272,10 @@ void main(void) {
              * checking if game_state was changed by battle_update. */
             if (battle_update()) {
                 /* Battle over – return to overworld */
+                if (is_boss_battle) {
+                    boss_beaten = 1;
+                    is_boss_battle = 0;
+                }
                 world_mark_dirty();
                 game_state = STATE_OVERWORLD;
                 break;
