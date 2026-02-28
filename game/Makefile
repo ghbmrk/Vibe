@@ -11,13 +11,15 @@ CC       = $(GBDK)/bin/lcc
 TARGET   = CreatureCollector.gbc
 
 # Compiler / linker flags
-#   -msm83:gbc        Target Game Boy Color
+#   -msm83:gb         Target Game Boy / Game Boy Color (SM83 CPU)
+#   -Wl-yp0x143=0xC0  Set CGB compatibility flag (GBC-only ROM)
 #   -Wl-yt0x1B        MBC5 + RAM + Battery (save support)
 #   -Wl-ya1           1 SRAM bank (8 KB, plenty for save data)
 #   -Wa-l             Generate assembler listing
 #   -Wl-m             Generate linker map file
 #   -Wf--max-allocs-per-node50000  Better SDCC optimisation
-CFLAGS   = -msm83:gbc \
+CFLAGS   = -msm83:gb \
+           -Wl-yp0x143=0xC0 \
            -Wl-yt0x1B \
            -Wl-ya1 \
            -Wa-l -Wl-m \

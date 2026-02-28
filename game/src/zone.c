@@ -96,8 +96,8 @@ static uint8_t get_tile(const uint8_t *map, uint8_t x, uint8_t y) {
     return TILE_WALL;
 }
 
-static void fill_rect(uint8_t *map, uint8_t x, uint8_t y,
-                       uint8_t w, uint8_t h, uint8_t tile) {
+static void map_fill(uint8_t *map, uint8_t x, uint8_t y,
+                     uint8_t w, uint8_t h, uint8_t tile) {
     uint8_t ix, iy;
     for (iy = 0; iy < h; iy++) {
         for (ix = 0; ix < w; ix++) {
@@ -289,12 +289,12 @@ void zone_gen_gym(uint8_t *map, uint8_t zone) {
 
     /* 2. Entrance at south center */
     place(map, 9, MAP_H - 1, TILE_DOOR);
-    fill_rect(map, 8, MAP_H - 3, 4, 2, TILE_PATH);
+    map_fill(map, 8, MAP_H - 3, 4, 2, TILE_PATH);
 
     /* 3. Main corridor from entrance to boss room */
     cx = 9;
     for (cy = MAP_H - 4; cy > 4; cy--) {
-        fill_rect(map, cx - 1, cy, 3, 1, TILE_PATH);
+        map_fill(map, cx - 1, cy, 3, 1, TILE_PATH);
         /* Occasional bend */
         if (z_range(0, 3) == 0 && cy > 6) {
             int8_t shift = (z_rand() & 1) ? 3 : -3;
@@ -303,7 +303,7 @@ void zone_gen_gym(uint8_t *map, uint8_t zone) {
                 /* Horizontal connector */
                 uint8_t lo = (cx < new_cx) ? (cx - 1) : (new_cx - 1);
                 uint8_t hi = (cx > new_cx) ? (cx + 1) : (new_cx + 1);
-                fill_rect(map, lo, cy, hi - lo + 1, 1, TILE_PATH);
+                map_fill(map, lo, cy, hi - lo + 1, 1, TILE_PATH);
                 cx = new_cx;
             }
         }
@@ -327,14 +327,14 @@ void zone_gen_gym(uint8_t *map, uint8_t zone) {
         if (rx < 1) rx = 1;
         if (ry + rh >= MAP_H - 1) rh = MAP_H - 2 - ry;
 
-        fill_rect(map, rx, ry, rw, rh, TILE_PATH);
+        map_fill(map, rx, ry, rw, rh, TILE_PATH);
 
         /* Connect room to corridor */
         {
             uint8_t conn_y = ry + rh / 2;
             uint8_t lo = MIN(rx, cx - 1);
             uint8_t hi = MAX(rx + rw - 1, cx + 1);
-            fill_rect(map, lo, conn_y, hi - lo + 1, 1, TILE_PATH);
+            map_fill(map, lo, conn_y, hi - lo + 1, 1, TILE_PATH);
         }
 
         /* Theme decoration */
@@ -357,9 +357,9 @@ void zone_gen_gym(uint8_t *map, uint8_t zone) {
     }
 
     /* 5. Boss room at top */
-    fill_rect(map, 5, 1, 10, 4, TILE_PATH);
+    map_fill(map, 5, 1, 10, 4, TILE_PATH);
     /* Connect boss room to corridor top */
-    fill_rect(map, MIN(cx - 1, 5), 4, MAX(cx + 2, 15) - MIN(cx - 1, 5), 1, TILE_PATH);
+    map_fill(map, MIN(cx - 1, 5), 4, MAX(cx + 2, 15) - MIN(cx - 1, 5), 1, TILE_PATH);
 
     /* Boss marker */
     g_boss_x = 9;

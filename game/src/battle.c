@@ -336,7 +336,7 @@ void battle_start(Creature *enemy, uint8_t boss_flag) {
     /* Generate and load procedural sprites */
     set_bkg_data(TILE_CREA_BASE, CREA_SPRITE_TILES,
                  sprite_gen_build(e_crea));
-    set_bkg_data(TILE_CREA_BASE + CREA_SPRITE_TILES, CREA_SPRITE_TILES,
+    set_bkg_data((uint8_t)(TILE_CREA_BASE + CREA_SPRITE_TILES), CREA_SPRITE_TILES,
                  sprite_gen_build(p_crea));
 
     /* Palette attributes for creature sprite areas */
@@ -560,7 +560,7 @@ uint8_t battle_update(void) {
                 p_last_stand = has_keystone(p_crea, NTYPE_LAST_STAND);
 
                 /* Reload player sprite */
-                set_bkg_data(TILE_CREA_BASE + CREA_SPRITE_TILES,
+                set_bkg_data((uint8_t)(TILE_CREA_BASE + CREA_SPRITE_TILES),
                              CREA_SPRITE_TILES,
                              sprite_gen_build(p_crea));
 
