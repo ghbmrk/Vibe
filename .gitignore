@@ -32,3 +32,12 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
+
+# GBDK build artifacts
+*.ihx
+*.map
+*.noi
+*.lst
+*.sym
+*.adb
+*.lk
