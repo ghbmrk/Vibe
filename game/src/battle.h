@@ -3,8 +3,8 @@
 
 #include "common.h"
 
-/* Start a battle against a wild creature. */
-void battle_start(Creature *enemy);
+/* Start a battle against a creature. boss_flag=1 prevents fleeing. */
+void battle_start(Creature *enemy, uint8_t boss_flag);
 
 /* Per-frame update – drives the battle state machine.
  * Returns non-zero when the battle is finished. */

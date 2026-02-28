@@ -72,11 +72,30 @@ void creature_calc_stats(Creature *c) {
      * This is what makes two creatures of the same species different. */
     for (i = 1; i < c->tree.count; i++) {
         if (!NODE_UNLOCKED(c->tree.nodes[i])) continue;
+
+        /* Passive keystones don't give flat stat bonuses –
+         * their effects are handled in battle. */
+        if (NODE_IS_PASSIVE(c->tree.nodes[i])) {
+            /* GLASS_CANNON is applied after the loop */
+            continue;
+        }
+
         switch (c->tree.nodes[i].category) {
             case SKILL_ATTACK:  c->atk += 2; break;
             case SKILL_DEFEND:  c->def += 2; c->max_hp += 3; break;
             case SKILL_SUPPORT: c->spc += 2; c->max_hp += 2; break;
             case SKILL_SPECIAL: c->atk += 1; c->spc += 1; c->spd += 1; break;
+        }
+    }
+
+    /* GLASS_CANNON keystone: +50% ATK, -30% DEF (permanent trade-off) */
+    for (i = 1; i < c->tree.count; i++) {
+        if (NODE_UNLOCKED(c->tree.nodes[i]) &&
+            NODE_NTYPE(c->tree.nodes[i]) == NTYPE_GLASS) {
+            c->atk = (uint8_t)((uint16_t)c->atk * 3u / 2u);
+            c->def = (uint8_t)((uint16_t)c->def * 7u / 10u);
+            if (c->def < 1) c->def = 1;
+            break;
         }
     }
 }

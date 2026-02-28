@@ -162,7 +162,7 @@ void ui_draw_skill_tree(const Creature *c, uint8_t selected) {
     uint8_t node_x[MAX_SKILL_NODES];
     uint8_t node_y[MAX_SKILL_NODES];
     const SkillNode *n;
-    char namebuf[NAME_LEN];
+    char namebuf[SKILL_NAME_LEN];
 
     ui_clear();
 
@@ -230,17 +230,32 @@ void ui_draw_skill_tree(const Creature *c, uint8_t selected) {
     /* Bottom panel: show details of selected node */
     ui_draw_box(0, 14, 20, 4);
     n = &tree->nodes[selected];
-    skilltree_skill_name(namebuf, n->element, n->category, selected & 3);
-    ui_print(1, 15, namebuf);
-    ui_print(12, 15, skilltree_cat_tag(n->category));
 
-    /* Power / Cost / Level */
-    ui_print(1, 16, "PWR:");
-    ui_print_num(5, 16, n->power);
-    ui_print(8, 16, "SP:");
-    ui_print_num(11, 16, n->cost);
-    ui_print(14, 16, "LV:");
-    ui_print_num(17, 16, n->req_level);
+    if (NODE_NTYPE(*n) != NTYPE_NORMAL) {
+        /* Keystone node: show type name + effect */
+        ui_print(1, 15, skilltree_ntype_name(NODE_NTYPE(*n)));
+        if (NODE_IS_PASSIVE(*n)) {
+            ui_print(11, 15, "PASSIVE");
+        } else {
+            ui_print(11, 15, skilltree_cat_tag(n->category));
+            ui_print(15, 15, "P:");
+            ui_print_num(17, 15, n->power);
+        }
+        ui_print(1, 16, skilltree_ntype_desc(NODE_NTYPE(*n)));
+        ui_print(14, 16, "LV:");
+        ui_print_num(17, 16, n->req_level);
+    } else {
+        /* Normal skill node */
+        skilltree_skill_name(namebuf, n->element, n->category, selected & 3);
+        ui_print(1, 15, namebuf);
+
+        ui_print(1, 16, "PWR:");
+        ui_print_num(5, 16, n->power);
+        ui_print(8, 16, "SP:");
+        ui_print_num(11, 16, n->cost);
+        ui_print(14, 16, "LV:");
+        ui_print_num(17, 16, n->req_level);
+    }
 
     /* Status line */
     if (NODE_UNLOCKED(*n)) {
@@ -251,8 +266,9 @@ void ui_draw_skill_tree(const Creature *c, uint8_t selected) {
         ui_print(1, 17, "LOCKED");
     }
 
-    /* Type name */
-    ui_print(12, 17, type_names[n->element]);
+    /* Element + respec hint */
+    ui_print(10, 17, type_names[n->element]);
+    ui_print(16, 17, "SE:R");
 }
 
 /* ---- Title screen ----------------------------------------- */

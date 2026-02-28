@@ -237,7 +237,7 @@ void main(void) {
                 generate_wild();
                 is_boss_battle = 0;
                 world_hide_player();
-                battle_start(&wild);
+                battle_start(&wild, 0);
                 game_state = STATE_BATTLE;
                 break;
             }
@@ -246,7 +246,7 @@ void main(void) {
                 generate_boss();
                 is_boss_battle = 1;
                 world_hide_player();
-                battle_start(&wild);
+                battle_start(&wild, 1);
                 game_state = STATE_BATTLE;
                 break;
             }
@@ -265,11 +265,6 @@ void main(void) {
 
         /* ---- BATTLE ---------------------------------------- */
         case STATE_BATTLE:
-            /* The battle may temporarily switch to SKILLTREE
-             * (via the "SKILLS" menu option).  When we come back
-             * from SKILLTREE, battle resumes because bstate
-             * is still BSTATE_PLAYER_MENU.  We handle that by
-             * checking if game_state was changed by battle_update. */
             if (battle_update()) {
                 /* Battle over – return to overworld */
                 if (is_boss_battle) {
@@ -278,14 +273,6 @@ void main(void) {
                 }
                 world_mark_dirty();
                 game_state = STATE_OVERWORLD;
-                break;
-            }
-
-            /* If battle_update set game_state to SKILLTREE, honour it */
-            if (game_state == STATE_SKILLTREE) {
-                st_creature_idx = 0;
-                st_node_sel = 0;
-                prev_state = STATE_BATTLE;
                 break;
             }
 
@@ -404,6 +391,24 @@ void main(void) {
                         c->hp += (c->max_hp - old_max);
                         if (c->hp > c->max_hp) c->hp = c->max_hp;
                     }
+                    screen_dirty = 1;
+                }
+            }
+
+            /* Respec: SELECT resets all unlocks and refunds points */
+            if (PRESSED(J_SELECT)) {
+                uint8_t ri;
+                uint8_t pts_refund = 0;
+                for (ri = 1; ri < c->tree.count; ri++) {
+                    if (NODE_UNLOCKED(c->tree.nodes[ri])) {
+                        NODE_LOCK(c->tree.nodes[ri]);
+                        pts_refund++;
+                    }
+                }
+                if (pts_refund > 0) {
+                    c->skill_pts += pts_refund;
+                    creature_calc_stats(c);
+                    c->hp = c->max_hp;
                     screen_dirty = 1;
                 }
             }

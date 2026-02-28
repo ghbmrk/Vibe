@@ -32,6 +32,25 @@
 #define SKILL_SPECIAL  3
 #define NUM_SKILL_CATS 4
 
+/* ======== Skill node types (keystones) =================== */
+/* Stored in SkillNode.flags bits 1-4.                        */
+#define NTYPE_NORMAL      0
+/* Passive keystones – always active once unlocked            */
+#define NTYPE_THORNS      1   /* reflect 25% damage taken      */
+#define NTYPE_BERSERK     2   /* +ATK as HP drops              */
+#define NTYPE_REGEN       3   /* heal 5% max HP per turn       */
+#define NTYPE_GLASS       4   /* +50% ATK, -30% DEF            */
+#define NTYPE_SWIFT       5   /* always act first              */
+#define NTYPE_MASTERY     6   /* super effective = 2x          */
+#define NTYPE_LAST_STAND  7   /* survive one lethal hit/battle */
+#define NTYPE_FORTRESS    8   /* DEF boosts persist all battle */
+/* Enhanced active – usable in battle with bonus effect       */
+#define NTYPE_VAMPIRIC    9   /* heal 25% of damage dealt      */
+#define NTYPE_LEECH_SP   10   /* recover half SP cost on use   */
+#define NTYPE_MULTICAST  11   /* 30% chance to double-cast     */
+#define NTYPE_DRAIN      12   /* also drain target SP          */
+#define NUM_NTYPES       13
+
 /* ======== Battle sub-states =============================== */
 #define BSTATE_INIT           0
 #define BSTATE_PLAYER_MENU    1
@@ -44,14 +63,16 @@
 #define BSTATE_CATCH_TRY      8
 #define BSTATE_RUN            9
 #define BSTATE_DONE          10
+#define BSTATE_SWAP          11
 
 /* ======== Limits ========================================== */
 #define MAX_PARTY        4
-#define MAX_SKILL_NODES  16
+#define MAX_SKILL_NODES  20
 #define MAX_ACTIVE_SKILLS 8
 #define MAX_SPECIES      6
 #define MAX_LEVEL        50
 #define NAME_LEN         9
+#define SKILL_NAME_LEN  13       /* max display name for skills */
 
 /* ======== Map dimensions (per screen) ===================== */
 #define MAP_W  20
@@ -163,7 +184,7 @@ typedef struct {
     uint8_t power;       /* base power  1-99                    */
     uint8_t cost;        /* SP cost in battle                   */
     uint8_t req_level;   /* level required to unlock            */
-    uint8_t flags;       /* bit 0 = unlocked                    */
+    uint8_t flags;       /* bit 0 = unlocked, bits 1-4 = ntype  */
 } SkillNode;
 
 /* Complete skill tree */
@@ -237,9 +258,12 @@ extern uint8_t  jpad;          /* current frame joypad state */
 extern uint8_t  jpad_prev;     /* previous frame joypad state */
 
 /* ======== Utility macros ================================== */
-#define NODE_UNLOCKED(n)  ((n).flags & 0x01u)
-#define NODE_UNLOCK(n)    ((n).flags |= 0x01u)
-#define NODE_LOCK(n)      ((n).flags &= (uint8_t)~0x01u)
+#define NODE_UNLOCKED(n)     ((n).flags & 0x01u)
+#define NODE_UNLOCK(n)       ((n).flags |= 0x01u)
+#define NODE_LOCK(n)         ((n).flags &= (uint8_t)~0x01u)
+#define NODE_NTYPE(n)        (((n).flags >> 1) & 0x0Fu)
+#define NODE_SET_NTYPE(n, t) ((n).flags = (uint8_t)(((n).flags & 0xE1u) | (((t) & 0x0Fu) << 1)))
+#define NODE_IS_PASSIVE(n)   (NODE_NTYPE(n) >= 1u && NODE_NTYPE(n) <= 8u)
 
 #define MIN(a,b) ((a) < (b) ? (a) : (b))
 #define MAX(a,b) ((a) > (b) ? (a) : (b))
