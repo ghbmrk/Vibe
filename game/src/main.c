@@ -106,6 +106,12 @@ static void generate_wild(void) {
 
     seed = rng_next();
     creature_init(&wild, species, level, seed);
+
+    /* Wild creatures have already made skill tree choices.
+     * Auto-unlock nodes based on level, then recalc stats with bonuses. */
+    skilltree_auto_unlock(&wild.tree, level, seed);
+    creature_calc_stats(&wild);
+    wild.hp = wild.max_hp;
 }
 
 /* ============================================================
@@ -370,6 +376,13 @@ void main(void) {
                     skilltree_can_unlock(&c->tree, st_node_sel, c->level)) {
                     skilltree_unlock(&c->tree, st_node_sel);
                     c->skill_pts--;
+                    /* Recalculate stats with new tree bonuses */
+                    {
+                        uint16_t old_max = c->max_hp;
+                        creature_calc_stats(c);
+                        c->hp += (c->max_hp - old_max);
+                        if (c->hp > c->max_hp) c->hp = c->max_hp;
+                    }
                     screen_dirty = 1;
                 }
             }

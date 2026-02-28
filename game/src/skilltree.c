@@ -222,3 +222,31 @@ uint8_t skilltree_get_usable(const SkillTree *tree, uint8_t *out, uint8_t max) {
     }
     return count;
 }
+
+void skilltree_auto_unlock(SkillTree *tree, uint8_t level, uint16_t seed) {
+    uint8_t pts, i, count, pick;
+    uint8_t candidates[MAX_SKILL_NODES];
+    uint16_t rng = seed ? seed : 1u;
+
+    /* Skill points: 1 initial + 1 per 2 levels */
+    pts = 1u + level / 2u;
+
+    while (pts > 0) {
+        /* Find all currently unlockable nodes */
+        count = 0;
+        for (i = 0; i < tree->count; i++) {
+            if (skilltree_can_unlock(tree, i, level)) {
+                candidates[count++] = i;
+            }
+        }
+        if (count == 0) break;
+
+        /* Deterministic pick using seed-derived RNG */
+        rng ^= rng << 7;
+        rng ^= rng >> 9;
+        rng ^= rng << 8;
+        pick = candidates[rng % (uint16_t)count];
+        skilltree_unlock(tree, pick);
+        pts--;
+    }
+}

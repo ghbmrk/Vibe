@@ -24,4 +24,9 @@ void skilltree_skill_name(char *buf, uint8_t element, uint8_t category,
 /* Category short tag for display: "ATK" "DEF" "SUP" "SPC" */
 const char *skilltree_cat_tag(uint8_t category);
 
+/* Auto-unlock nodes for a wild creature.
+ * Simulates skill point spending up to `level` using `seed` for choices.
+ * Call after skilltree_generate and before recalculating stats. */
+void skilltree_auto_unlock(SkillTree *tree, uint8_t level, uint16_t seed);
+
 #endif /* SKILLTREE_H */

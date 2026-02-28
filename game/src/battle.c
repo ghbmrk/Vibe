@@ -12,6 +12,7 @@
 #include "battle.h"
 #include "creature.h"
 #include "skilltree.h"
+#include "sprite_gen.h"
 #include "ui.h"
 #include "rng.h"
 #include "gfx_data.h"
@@ -147,12 +148,12 @@ void battle_start(Creature *enemy) {
     p_skill_count = skilltree_get_usable(&p_crea->tree, p_skills,
                                          MAX_ACTIVE_SKILLS);
 
-    /* Load creature sprites into background VRAM for battle display.
-     * Enemy front sprite at TILE_CREA_BASE, player at TILE_CREA_BASE+16. */
+    /* Generate and load procedural sprites into VRAM.
+     * Each creature's sprite reflects its skill tree state. */
     set_bkg_data(TILE_CREA_BASE, CREA_SPRITE_TILES,
-                 creature_sprites[e_crea->species]);
+                 sprite_gen_build(e_crea));
     set_bkg_data(TILE_CREA_BASE + CREA_SPRITE_TILES, CREA_SPRITE_TILES,
-                 creature_sprites[p_crea->species]);
+                 sprite_gen_build(p_crea));
 
     /* Set palette attributes for creature sprite areas.
      * Map element type to BG palette:

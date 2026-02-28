@@ -58,14 +58,27 @@ uint16_t creature_exp_for_level(uint8_t level) {
 void creature_calc_stats(Creature *c) {
     const SpeciesData *sp = &species_table[c->species];
     uint16_t lv = c->level;
+    uint8_t i;
 
-    /* HP = (base*2*level)/100 + level + 10 */
+    /* Base stats from species + level */
     c->max_hp = (uint16_t)((sp->base_hp  * 2u * lv) / 100u) + lv + 10u;
     c->atk    = (uint8_t) ((sp->base_atk * 2u * lv) / 100u) + 5u;
     c->def    = (uint8_t) ((sp->base_def * 2u * lv) / 100u) + 5u;
     c->spd    = (uint8_t) ((sp->base_spd * 2u * lv) / 100u) + 5u;
     c->spc    = (uint8_t) ((sp->base_spc * 2u * lv) / 100u) + 5u;
     c->sp_max = 10u + lv / 2u;
+
+    /* Skill tree bonuses – each unlocked node modifies stats.
+     * This is what makes two creatures of the same species different. */
+    for (i = 1; i < c->tree.count; i++) {
+        if (!NODE_UNLOCKED(c->tree.nodes[i])) continue;
+        switch (c->tree.nodes[i].category) {
+            case SKILL_ATTACK:  c->atk += 2; break;
+            case SKILL_DEFEND:  c->def += 2; c->max_hp += 3; break;
+            case SKILL_SUPPORT: c->spc += 2; c->max_hp += 2; break;
+            case SKILL_SPECIAL: c->atk += 1; c->spc += 1; c->spd += 1; break;
+        }
+    }
 }
 
 /* ---- Creature initialisation ------------------------------ */
