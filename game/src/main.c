@@ -163,7 +163,7 @@ static void state_starter(void) {
 
             /* Enter zone 0 */
             enter_zone(0);
-            game.state = ST_SHOP; /* shop first before exploring */
+            game.state = ST_OVERWORLD;
             return;
         }
     }
@@ -377,7 +377,7 @@ static void state_overworld(void) {
                 ui_print(1, 9, "ADVANCING...");
                 ui_wait_press();
                 enter_zone(game.zone.zone_num + 1);
-                game.state = ST_SHOP;
+                game.state = ST_OVERWORLD;
                 return;
             }
             if (game.in_gym) {
@@ -419,7 +419,10 @@ static void state_battle_encounter(uint8_t is_boss) {
 
     if (result == BATTLE_LOSE) {
         /* Death: reset to zone start */
+        SCX_REG = 0;
+        SCY_REG = 0;
         ui_clear_screen();
+        ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
         ui_print(2, 7, "THE EMPEROR");
         ui_print(2, 8, "PROTECTS...");
         ui_print(2, 10, "RETURNING TO");
@@ -455,6 +458,8 @@ static void state_battle_encounter(uint8_t is_boss) {
     game.player.gold += gold_reward;
 
     /* Show gold earned */
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_draw_box(0, 13, 20, 5);
     ui_print(1, 14, "EARNED $");
     ui_print_num(9, 14, gold_reward);
@@ -548,6 +553,8 @@ static void state_skilltree_char(void) {
     uint8_t sel;
     const char *desc_strs[3];
 
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_clear_screen();
     ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
 
@@ -593,6 +600,8 @@ static void state_skilltree_creature(void) {
     uint8_t sel;
     const char *desc_strs[3];
 
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_clear_screen();
     ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
 
@@ -642,6 +651,8 @@ static void state_menu(void) {
     };
     uint8_t sel;
 
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_clear_screen();
     ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
     ui_draw_box(0, 0, 20, 18);
@@ -694,7 +705,10 @@ static void state_menu(void) {
 
 /* ── Game over ─────────────────────────────────────────────── */
 static void state_gameover(void) {
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_clear_screen();
+    ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
     ui_print(4, 7, "GAME OVER");
     ui_print(2, 9, "THE HUNT CONTINUES");
     ui_print(4, 11, "PRESS START");

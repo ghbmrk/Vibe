@@ -31,7 +31,14 @@ static void draw_creature_sprite(uint8_t bx, uint8_t by,
 
 /* ── Draw full battle scene ────────────────────────────────── */
 void battle_draw_scene(const Creature *player_c, const Creature *enemy_c) {
+    /* Reset scroll to top-left so the battle screen is visible */
+    SCX_REG = 0;
+    SCY_REG = 0;
+
     ui_clear_screen();
+
+    /* Set entire screen to UI palette for text readability */
+    ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
 
     /* Enemy info (top) */
     ui_print(0, 0, species_names[enemy_c->species]);
@@ -526,6 +533,8 @@ uint8_t battle_post_choice(const Creature *defeated) {
     uint8_t choice;
     (void)defeated;
 
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_draw_box(0, 13, 20, 5);
     ui_print(1, 14, "WHAT DO YOU DO");
     ui_print(1, 15, "WITH THE PREY?");

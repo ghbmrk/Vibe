@@ -52,7 +52,10 @@ void shop_run(uint8_t zone_num) {
 
     (void)zone_num;
 
+    SCX_REG = 0;
+    SCY_REG = 0;
     ui_clear_screen();
+    ui_set_palette_rect(0, 0, 20, 18, PAL_UI);
     ui_draw_box(0, 0, 20, 18);
 
     for (;;) {
