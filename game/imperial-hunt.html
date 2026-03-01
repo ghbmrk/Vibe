@@ -1,0 +1,2667 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>IMPERIAL HUNT - Space Marine Creature RPG</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+html,body{width:100%;height:100%;background:#0a0a0a;overflow:hidden;
+  display:flex;align-items:center;justify-content:center;
+  font-family:monospace;-webkit-user-select:none;user-select:none}
+#wrap{position:relative;image-rendering:pixelated;image-rendering:crisp-edges}
+canvas{display:block;image-rendering:pixelated;image-rendering:crisp-edges}
+#touch{position:absolute;bottom:-180px;left:50%;transform:translateX(-50%);
+  display:flex;gap:16px;align-items:center}
+.dpad{position:relative;width:120px;height:120px}
+.dpad button{position:absolute;width:40px;height:40px;background:#222;
+  border:2px solid #444;border-radius:6px;color:#888;font-size:18px;
+  display:flex;align-items:center;justify-content:center;cursor:pointer}
+.dpad button:active{background:#444;border-color:#666}
+.dpad .up{top:0;left:40px}.dpad .down{bottom:0;left:40px}
+.dpad .left{top:40px;left:0}.dpad .right{top:40px;right:0}
+.btns{display:flex;gap:12px}
+.btns button{width:50px;height:50px;border-radius:50%;border:2px solid #666;
+  background:#333;color:#ddd;font-weight:bold;font-size:14px;cursor:pointer}
+.btns button:active{background:#555}
+.abtn{background:#833!important;border-color:#a44!important}
+.bbtn{background:#338!important;border-color:#44a!important}
+.sbtn{width:36px!important;height:28px!important;border-radius:12px!important;
+  font-size:10px!important}
+</style>
+</head>
+<body>
+<div id="wrap">
+<canvas id="c" width="160" height="144"></canvas>
+</div>
+<script>
+"use strict";
+// ═══════════════════════════════════════════════════════════
+// IMPERIAL HUNT - GBC Space Marine Creature Collector RPG
+// HTML5 Canvas Implementation - Faithful GBC Aesthetic
+// ═══════════════════════════════════════════════════════════
+
+// ── Canvas & Scale ─────────────────────────────────────────
+const W=160,H=144,SCALE=3;
+const cvs=document.getElementById('c');
+const ctx=cvs.getContext('2d');
+cvs.width=W;cvs.height=H;
+cvs.style.width=(W*SCALE)+'px';
+cvs.style.height=(H*SCALE)+'px';
+ctx.imageSmoothingEnabled=false;
+
+// Offscreen buffer for double-buffering
+const buf=document.createElement('canvas');
+buf.width=W;buf.height=H;
+const bctx=buf.getContext('2d');
+bctx.imageSmoothingEnabled=false;
+
+// ── Constants ──────────────────────────────────────────────
+const TW=8,TH=8; // tile size
+const COLS=20,ROWS=18; // screen tiles
+const MAP_W=32,MAP_H=32;
+
+// Elements
+const ELEM={FIRE:0,WATER:1,EARTH:2,ELECTRIC:3,SHADOW:4,LIGHT:5,NORMAL:6};
+const ELEM_NAMES=['FIRE','WATER','EARTH','ELECTRIC','SHADOW','LIGHT','NORMAL'];
+
+// Game states
+const ST={TITLE:0,STARTER:1,OVERWORLD:2,BATTLE:3,SHOP:4,
+  SKILL_CHAR:5,SKILL_CREA:6,GAMEOVER:7,MENU:8,POST_BATTLE:9};
+
+// Directions
+const DIR={DOWN:0,UP:1,LEFT:2,RIGHT:3};
+
+// Battle results
+const BR={WIN:0,LOSE:1,RUN:2};
+
+// Post-battle choices
+const PC={EAT:0,FEED:1,CATCH:2};
+
+// Move roles
+const ROLE={STRIKE:0,BURST:1,GUARD:2,TECHNIQUE:3};
+
+// Max limits
+const MAX_MOVES=4,MAX_SKILLS=16,MAX_LEVEL=50,MAX_GEAR=2;
+
+// ── GBC Color Palettes ────────────────────────────────────
+function rgb(r,g,b){return[r,g,b]}
+const PAL={
+  UI:[rgb(248,248,248),rgb(160,160,160),rgb(80,80,80),rgb(8,8,8)],
+  GRASS:[rgb(200,248,120),rgb(96,224,64),rgb(64,176,32),rgb(32,112,16)],
+  TALL_GRASS:[rgb(160,232,88),rgb(80,200,48),rgb(48,160,24),rgb(24,96,8)],
+  TREE:[rgb(224,192,128),rgb(144,112,48),rgb(96,80,32),rgb(48,32,16)],
+  PATH:[rgb(248,224,160),rgb(208,176,112),rgb(160,128,80),rgb(112,80,48)],
+  WATER:[rgb(160,200,248),rgb(80,144,224),rgb(32,96,192),rgb(16,48,128)],
+  GYM:[rgb(224,224,232),rgb(160,160,176),rgb(112,112,128),rgb(48,48,64)],
+  FIRE:[rgb(248,192,80),rgb(248,128,32),rgb(192,64,16),rgb(112,32,0)],
+  ACCENT:[rgb(248,224,64),rgb(224,160,32),rgb(160,96,16),rgb(96,48,0)],
+  // Creature element palettes
+  E_FIRE:[rgb(248,192,80),rgb(248,112,32),rgb(192,48,16),rgb(112,16,0)],
+  E_WATER:[rgb(144,192,248),rgb(64,128,224),rgb(32,80,176),rgb(16,32,112)],
+  E_EARTH:[rgb(208,176,112),rgb(144,112,64),rgb(96,80,32),rgb(48,32,16)],
+  E_ELEC:[rgb(248,248,128),rgb(224,224,32),rgb(176,160,16),rgb(112,96,0)],
+  E_SHADOW:[rgb(144,112,176),rgb(96,64,144),rgb(64,32,112),rgb(32,16,64)],
+  E_LIGHT:[rgb(248,248,224),rgb(224,224,160),rgb(192,192,96),rgb(144,144,48)],
+  E_NORMAL:[rgb(224,224,224),rgb(160,160,160),rgb(112,112,112),rgb(48,48,48)],
+  // Player sprite palette
+  MARINE:[rgb(0,0,0),rgb(64,96,224),rgb(32,64,176),rgb(16,32,112)],
+  MARINE2:[rgb(0,0,0),rgb(248,224,64),rgb(192,144,32),rgb(112,80,16)],
+  // HP bar colors
+  HP_GREEN:[rgb(32,224,32)],HP_YELLOW:[rgb(224,224,32)],HP_RED:[rgb(224,32,32)],
+};
+const ELEM_PAL=[PAL.E_FIRE,PAL.E_WATER,PAL.E_EARTH,PAL.E_ELEC,PAL.E_SHADOW,PAL.E_LIGHT,PAL.E_NORMAL];
+
+// ── RNG (XorShift16) ──────────────────────────────────────
+let rngState=Date.now()&0xFFFF||1;
+function rngSeed(s){rngState=s||1}
+function rngNext(){rngState^=rngState<<7;rngState&=0xFFFF;rngState^=rngState>>9;rngState&=0xFFFF;rngState^=rngState<<8;rngState&=0xFFFF;return rngState}
+function rngRange(lo,hi){if(lo>=hi)return lo;return lo+(rngNext()%(hi-lo+1))}
+function rngChance(pct){return(rngNext()%100)<pct}
+
+// ── Input System ──────────────────────────────────────────
+const keys={up:false,down:false,left:false,right:false,a:false,b:false,start:false,select:false};
+const justPressed={up:false,down:false,left:false,right:false,a:false,b:false,start:false,select:false};
+const prevKeys={up:false,down:false,left:false,right:false,a:false,b:false,start:false,select:false};
+
+const keyMap={
+  ArrowUp:'up',ArrowDown:'down',ArrowLeft:'left',ArrowRight:'right',
+  w:'up',s:'down',a:'left',d:'right',
+  z:'a',x:'b',Enter:'start',Shift:'select',
+  ' ':'a',Escape:'start'
+};
+
+document.addEventListener('keydown',e=>{
+  const k=keyMap[e.key];if(k){keys[k]=true;e.preventDefault()}
+});
+document.addEventListener('keyup',e=>{
+  const k=keyMap[e.key];if(k){keys[k]=false;e.preventDefault()}
+});
+
+function updateInput(){
+  for(const k in keys){
+    justPressed[k]=keys[k]&&!prevKeys[k];
+    prevKeys[k]=keys[k];
+  }
+}
+
+// Touch controls
+function addTouch(){
+  const wrap=document.getElementById('wrap');
+  const td=document.createElement('div');td.id='touch';
+  td.innerHTML=`
+    <div class="dpad">
+      <button class="up">&#9650;</button>
+      <button class="down">&#9660;</button>
+      <button class="left">&#9664;</button>
+      <button class="right">&#9654;</button>
+    </div>
+    <div class="btns">
+      <button class="sbtn">SEL</button>
+      <button class="sbtn">STA</button>
+      <button class="bbtn">B</button>
+      <button class="abtn">A</button>
+    </div>`;
+  wrap.appendChild(td);
+  const mk=(el,k)=>{
+    el.addEventListener('touchstart',e=>{e.preventDefault();keys[k]=true});
+    el.addEventListener('touchend',e=>{e.preventDefault();keys[k]=false});
+    el.addEventListener('mousedown',e=>{keys[k]=true});
+    el.addEventListener('mouseup',e=>{keys[k]=false});
+  };
+  mk(td.querySelector('.up'),'up');mk(td.querySelector('.down'),'down');
+  mk(td.querySelector('.left'),'left');mk(td.querySelector('.right'),'right');
+  mk(td.querySelector('.abtn'),'a');mk(td.querySelector('.bbtn'),'b');
+  const sbts=td.querySelectorAll('.sbtn');
+  mk(sbts[0],'select');mk(sbts[1],'start');
+}
+addTouch();
+
+// ── Pixel Font (1bpp 8x8) ────────────────────────────────
+const FONT_DATA={
+  ' ':[0,0,0,0,0,0,0,0],
+  'A':[0x18,0x3C,0x66,0x66,0x7E,0x66,0x66,0],
+  'B':[0x7C,0x66,0x66,0x7C,0x66,0x66,0x7C,0],
+  'C':[0x3C,0x66,0x60,0x60,0x60,0x66,0x3C,0],
+  'D':[0x78,0x6C,0x66,0x66,0x66,0x6C,0x78,0],
+  'E':[0x7E,0x60,0x60,0x7C,0x60,0x60,0x7E,0],
+  'F':[0x7E,0x60,0x60,0x7C,0x60,0x60,0x60,0],
+  'G':[0x3C,0x66,0x60,0x6E,0x66,0x66,0x3E,0],
+  'H':[0x66,0x66,0x66,0x7E,0x66,0x66,0x66,0],
+  'I':[0x3C,0x18,0x18,0x18,0x18,0x18,0x3C,0],
+  'J':[0x1E,0x0C,0x0C,0x0C,0x0C,0x6C,0x38,0],
+  'K':[0x66,0x6C,0x78,0x70,0x78,0x6C,0x66,0],
+  'L':[0x60,0x60,0x60,0x60,0x60,0x60,0x7E,0],
+  'M':[0x63,0x77,0x7F,0x6B,0x63,0x63,0x63,0],
+  'N':[0x66,0x76,0x7E,0x7E,0x6E,0x66,0x66,0],
+  'O':[0x3C,0x66,0x66,0x66,0x66,0x66,0x3C,0],
+  'P':[0x7C,0x66,0x66,0x7C,0x60,0x60,0x60,0],
+  'Q':[0x3C,0x66,0x66,0x66,0x6A,0x6C,0x36,0],
+  'R':[0x7C,0x66,0x66,0x7C,0x6C,0x66,0x66,0],
+  'S':[0x3C,0x66,0x60,0x3C,0x06,0x66,0x3C,0],
+  'T':[0x7E,0x18,0x18,0x18,0x18,0x18,0x18,0],
+  'U':[0x66,0x66,0x66,0x66,0x66,0x66,0x3C,0],
+  'V':[0x66,0x66,0x66,0x66,0x66,0x3C,0x18,0],
+  'W':[0x63,0x63,0x63,0x6B,0x7F,0x77,0x63,0],
+  'X':[0x66,0x66,0x3C,0x18,0x3C,0x66,0x66,0],
+  'Y':[0x66,0x66,0x66,0x3C,0x18,0x18,0x18,0],
+  'Z':[0x7E,0x06,0x0C,0x18,0x30,0x60,0x7E,0],
+  '0':[0x3C,0x66,0x6E,0x76,0x66,0x66,0x3C,0],
+  '1':[0x18,0x38,0x18,0x18,0x18,0x18,0x7E,0],
+  '2':[0x3C,0x66,0x06,0x0C,0x18,0x30,0x7E,0],
+  '3':[0x3C,0x66,0x06,0x1C,0x06,0x66,0x3C,0],
+  '4':[0x0C,0x1C,0x3C,0x6C,0x7E,0x0C,0x0C,0],
+  '5':[0x7E,0x60,0x7C,0x06,0x06,0x66,0x3C,0],
+  '6':[0x3C,0x60,0x60,0x7C,0x66,0x66,0x3C,0],
+  '7':[0x7E,0x06,0x0C,0x18,0x30,0x30,0x30,0],
+  '8':[0x3C,0x66,0x66,0x3C,0x66,0x66,0x3C,0],
+  '9':[0x3C,0x66,0x66,0x3E,0x06,0x06,0x3C,0],
+  '!':[0x18,0x18,0x18,0x18,0x18,0,0x18,0],
+  '?':[0x3C,0x66,0x06,0x0C,0x18,0,0x18,0],
+  '.':[0,0,0,0,0,0,0x18,0],
+  ',':[0,0,0,0,0,0x18,0x18,0x30],
+  ':':[0,0,0x18,0,0,0x18,0,0],
+  '-':[0,0,0,0x3C,0,0,0,0],
+  '/':[0x02,0x06,0x0C,0x18,0x30,0x60,0x40,0],
+  '+':[0,0x18,0x18,0x7E,0x18,0x18,0,0],
+  '=':[0,0,0x7E,0,0x7E,0,0,0],
+  '$':[0x18,0x3E,0x60,0x3C,0x06,0x7C,0x18,0],
+  '#':[0x24,0x24,0x7E,0x24,0x7E,0x24,0x24,0],
+  '%':[0x62,0x64,0x08,0x10,0x20,0x4C,0x8C,0],
+  '>':[0,0x30,0x18,0x0C,0x18,0x30,0,0],
+  '<':[0,0x0C,0x18,0x30,0x18,0x0C,0,0],
+  '*':[0,0x66,0x3C,0xFF,0x3C,0x66,0,0],
+  '(':[0x0C,0x18,0x30,0x30,0x30,0x18,0x0C,0],
+  ')':[0x30,0x18,0x0C,0x0C,0x0C,0x18,0x30,0],
+  '\'':[0x18,0x18,0x30,0,0,0,0,0],
+  '@':[0x3C,0x66,0x6E,0x6A,0x6E,0x60,0x3C,0],
+  '^':[0x18,0x3C,0x66,0,0,0,0,0],
+};
+
+function drawChar(cx,x,y,ch,pal,ci){
+  ci=ci||1;
+  const d=FONT_DATA[ch]||FONT_DATA[' '];
+  const c=pal[ci];
+  for(let row=0;row<8;row++){
+    let bits=d[row];
+    for(let col=0;col<8;col++){
+      if(bits&(0x80>>col)){
+        cx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+        cx.fillRect(x+col,y+row,1,1);
+      }
+    }
+  }
+}
+
+function drawText(cx,x,y,str,pal,ci){
+  pal=pal||PAL.UI;ci=ci||3;
+  for(let i=0;i<str.length;i++){
+    drawChar(cx,x+i*8,y,str[i].toUpperCase(),pal,ci);
+  }
+}
+
+function drawTextShadow(cx,x,y,str,pal,ci,si){
+  si=si||2;ci=ci||3;pal=pal||PAL.UI;
+  drawText(cx,x+1,y+1,str,pal,si);
+  drawText(cx,x,y,str,pal,ci);
+}
+
+function textWidth(str){return str.length*8}
+
+// ── Drawing Helpers ───────────────────────────────────────
+function fillRect(cx,x,y,w,h,c){
+  cx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+  cx.fillRect(x,y,w,h);
+}
+
+function drawBox(cx,x,y,w,h,pal){
+  pal=pal||PAL.UI;
+  // Fill
+  fillRect(cx,x,y,w,h,pal[0]);
+  // Border (2px)
+  fillRect(cx,x,y,w,2,pal[3]);
+  fillRect(cx,x,y+h-2,w,2,pal[3]);
+  fillRect(cx,x,y,2,h,pal[3]);
+  fillRect(cx,x+w-2,y,2,h,pal[3]);
+  // Inner highlight
+  fillRect(cx,x+2,y+2,w-4,1,pal[1]);
+  fillRect(cx,x+2,y+2,1,h-4,pal[1]);
+}
+
+function drawHPBar(cx,x,y,cur,max,w){
+  const bw=w-2;
+  fillRect(cx,x,y,w,6,[40,40,40]);
+  fillRect(cx,x+1,y+1,bw,4,[20,20,20]);
+  if(max<=0)max=1;
+  const pct=Math.max(0,Math.min(1,cur/max));
+  const fw=Math.round(bw*pct);
+  const c=pct>0.5?PAL.HP_GREEN[0]:pct>0.25?PAL.HP_YELLOW[0]:PAL.HP_RED[0];
+  if(fw>0)fillRect(cx,x+1,y+1,fw,4,c);
+}
+
+function drawSPBar(cx,x,y,cur,max,w){
+  const bw=w-2;
+  fillRect(cx,x,y,w,4,[40,40,40]);
+  fillRect(cx,x+1,y+1,bw,2,[20,20,20]);
+  if(max<=0)max=1;
+  const pct=Math.max(0,Math.min(1,cur/max));
+  const fw=Math.round(bw*pct);
+  if(fw>0)fillRect(cx,x+1,y+1,fw,2,[80,160,248]);
+}
+
+// ═══════════════════════════════════════════════════════════
+// SPECIES, MOVES, AND CREATURE SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+const SPECIES=[
+  {name:'EMBERON',  type:ELEM.FIRE,    hp:45,atk:18,def:12,spd:14,moves:[1,0],
+   ability:'BLAZE',abilDesc:'ATK+25% below 33% HP',
+   desc:'Fire lizard with burning tail'},
+  {name:'TIDALIN',  type:ELEM.WATER,   hp:50,atk:14,def:16,spd:13,moves:[2,0],
+   ability:'TORRENT',abilDesc:'DEF+25% below 33% HP',
+   desc:'Armored water serpent'},
+  {name:'TERRAVOLT', type:ELEM.EARTH,  hp:55,atk:16,def:18,spd:10,moves:[3,0],
+   ability:'OVERGROW',abilDesc:'Heal 5% at turn end',
+   desc:'Stone golem with crystal core'},
+  {name:'ZAPPIX',   type:ELEM.ELECTRIC,hp:40,atk:16,def:10,spd:20,moves:[4,0],
+   ability:'STATIC',abilDesc:'20% Stun on contact',
+   desc:'Electric fox with bolt tail'},
+  {name:'SHADRIX',  type:ELEM.SHADOW,  hp:42,atk:20,def:10,spd:18,moves:[5,0],
+   ability:'PHANTOM',abilDesc:'15% dodge chance',
+   desc:'Shadow bat with piercing eyes'},
+  {name:'LUMINOS',  type:ELEM.LIGHT,   hp:48,atk:15,def:14,spd:15,moves:[6,0],
+   ability:'RADIANT',abilDesc:'Heal allies 10% on KO',
+   desc:'Light moth with halo wings'},
+];
+
+// Moves: name, type, power, accuracy, spCost, role, effect
+const MOVES=[
+  {name:'TACKLE',    type:ELEM.NORMAL,  pow:40,acc:100,sp:0, role:ROLE.STRIKE,  fx:''},
+  {name:'EMBER',     type:ELEM.FIRE,    pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'SPLASH',    type:ELEM.WATER,   pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'ROCKFALL',  type:ELEM.EARTH,   pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'SPARK',     type:ELEM.ELECTRIC,pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'HEX',       type:ELEM.SHADOW,  pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'FLASH',     type:ELEM.LIGHT,   pow:40,acc:100,sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'BLAZE',     type:ELEM.FIRE,    pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'TORRENT',   type:ELEM.WATER,   pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'QUAKE',     type:ELEM.EARTH,   pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'THUNDER',   type:ELEM.ELECTRIC,pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'VOID',      type:ELEM.SHADOW,  pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'RADIANCE',  type:ELEM.LIGHT,   pow:65,acc:90, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'INFERNO',   type:ELEM.FIRE,    pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'TSUNAMI',   type:ELEM.WATER,   pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'TREMOR',    type:ELEM.EARTH,   pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'SURGE',     type:ELEM.ELECTRIC,pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'ECLIPSE',   type:ELEM.SHADOW,  pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'NOVA',      type:ELEM.LIGHT,   pow:90,acc:80, sp:10,role:ROLE.BURST,   fx:''},
+  {name:'STRIKE',    type:ELEM.NORMAL,  pow:55,acc:95, sp:3, role:ROLE.STRIKE,  fx:''},
+  {name:'SLAM',      type:ELEM.NORMAL,  pow:75,acc:85, sp:6, role:ROLE.BURST,   fx:''},
+  {name:'RUSH',      type:ELEM.NORMAL,  pow:35,acc:100,sp:2, role:ROLE.STRIKE,  fx:'priority'},
+  {name:'GUARD',     type:ELEM.NORMAL,  pow:0, acc:100,sp:4, role:ROLE.GUARD,   fx:'shield'},
+  {name:'VENOM',     type:ELEM.SHADOW,  pow:30,acc:95, sp:5, role:ROLE.TECHNIQUE,fx:'poison'},
+  {name:'STUN BOLT', type:ELEM.ELECTRIC,pow:30,acc:90, sp:5, role:ROLE.TECHNIQUE,fx:'stun'},
+  {name:'RECOVER',   type:ELEM.NORMAL,  pow:0, acc:100,sp:8, role:ROLE.GUARD,   fx:'heal'},
+  {name:'DRAIN',     type:ELEM.SHADOW,  pow:45,acc:95, sp:6, role:ROLE.TECHNIQUE,fx:'drain'},
+  {name:'BOLSTER',   type:ELEM.LIGHT,   pow:0, acc:100,sp:5, role:ROLE.GUARD,   fx:'atkup'},
+];
+
+// Type effectiveness chart [attacker][defender] -> multiplier (100=neutral)
+const TYPE_CHART=[ // FIRE WATER EARTH ELEC SHADOW LIGHT NORMAL
+  /*FIRE*/    [100, 67, 150, 100, 100, 100, 100],
+  /*WATER*/   [150, 100, 67, 100, 100, 100, 100],
+  /*EARTH*/   [ 67, 150, 100, 150, 100, 100, 100],
+  /*ELECTRIC*/[100, 150, 67, 100, 100, 100, 100],
+  /*SHADOW*/  [100, 100, 100, 100, 100, 150, 100],
+  /*LIGHT*/   [100, 100, 100, 100, 150, 100, 100],
+  /*NORMAL*/  [100, 100, 100, 100, 100, 100, 100],
+];
+
+function typeEffectiveness(atkType,defType){
+  return TYPE_CHART[atkType][defType];
+}
+
+function typeSTAB(creatureType,moveType){
+  return creatureType===moveType?125:100;
+}
+
+// ── Creature Factory ──────────────────────────────────────
+function createCreature(species,level){
+  const sp=SPECIES[species];
+  const lvScale=1+(level-1)*0.08;
+  const c={
+    species:species,
+    name:sp.name,
+    type:sp.type,
+    level:level,
+    xp:0,
+    xpNext:xpForLevel(level+1),
+    maxHp:Math.floor(sp.hp*lvScale),
+    hp:0,
+    maxSp:20+level*2,
+    sp:0,
+    atk:Math.floor(sp.atk*lvScale),
+    def:Math.floor(sp.def*lvScale),
+    spd:Math.floor(sp.spd*lvScale),
+    moves:[...sp.moves],
+    skills:[],
+    gear:[null,null], // Core, Charm
+    // Status
+    poison:0,stun:0,shield:0,atkBuff:0,
+  };
+  c.hp=c.maxHp;
+  c.sp=c.maxSp;
+  return c;
+}
+
+function healCreature(c){
+  c.hp=c.maxHp;c.sp=c.maxSp;
+  c.poison=0;c.stun=0;c.shield=0;c.atkBuff=0;
+}
+
+function xpForLevel(lv){return lv*lv*12}
+
+function creatureAwardXP(c,amount){
+  c.xp+=amount;
+  if(c.xp>=c.xpNext&&c.level<MAX_LEVEL){
+    c.level++;
+    c.xp-=c.xpNext;
+    c.xpNext=xpForLevel(c.level+1);
+    // Recalc stats
+    const sp=SPECIES[c.species];
+    const ls=1+(c.level-1)*0.08;
+    c.maxHp=Math.floor(sp.hp*ls);
+    c.atk=Math.floor(sp.atk*ls);
+    c.def=Math.floor(sp.def*ls);
+    c.spd=Math.floor(sp.spd*ls);
+    // Apply skill bonuses
+    for(const sk of c.skills){
+      if(sk===0)c.atk+=2;
+      if(sk===1)c.def+=2;
+      if(sk===2)c.spd+=2;
+      if(sk===3)c.maxHp+=5;
+      if(sk===9)c.maxHp+=10;
+      if(sk===11)c.spd+=3;
+    }
+    c.hp=c.maxHp;c.sp=c.maxSp;
+    return true;
+  }
+  return false;
+}
+
+// ── Character System ──────────────────────────────────────
+function createCharacter(){
+  return{
+    level:1,xp:0,xpNext:xpForLevel(2),
+    cha:3,wis:3,lck:3,con:3, // Command, Wisdom, Luck, Constitution
+    gold:100,skills:[],
+  };
+}
+
+function charAwardXP(ch,amount){
+  ch.xp+=amount;
+  if(ch.xp>=ch.xpNext&&ch.level<MAX_LEVEL){
+    ch.level++;ch.xp-=ch.xpNext;ch.xpNext=xpForLevel(ch.level+1);
+    return true;
+  }
+  return false;
+}
+
+function charXPMult(ch){return 100+ch.wis*5+(charHasSkill(ch,9)?15:0)}
+function charGoldMult(ch){return 100+ch.lck*3+(charHasSkill(ch,10)?20:0)}
+function charCatchBonus(ch){return ch.lck*3+(charHasSkill(ch,7)?10:0)}
+function charHasSkill(ch,id){return ch.skills.includes(id)}
+
+// ═══════════════════════════════════════════════════════════
+// SPRITE RENDERING (Programmatic Pixel Art)
+// ═══════════════════════════════════════════════════════════
+
+// Player sprite (space marine, chibi, 16x16)
+const MARINE_DOWN=[
+  '....1111....',
+  '...123321...',
+  '..12233221..',
+  '..12222221..',
+  '..13333331..',
+  '..11333311..',
+  '.1111111111.',
+  '.1133113311.',
+  '1113311331..',
+  '.113333311..',
+  '..1133311...',
+  '..1133311...',
+  '..11...11...',
+  '..11...11...',
+  '.111...111..',
+  '.111...111..',
+];
+const MARINE_UP=[
+  '....1111....',
+  '...111111...',
+  '..11111111..',
+  '..11111111..',
+  '..11111111..',
+  '..11111111..',
+  '.1111111111.',
+  '.1111111111.',
+  '1111111111..',
+  '.111111111..',
+  '..1133311...',
+  '..1133311...',
+  '..11...11...',
+  '..11...11...',
+  '.111...111..',
+  '.111...111..',
+];
+const MARINE_SIDE=[
+  '...1111.....',
+  '..123321....',
+  '.12233221...',
+  '.12222221...',
+  '.11333311...',
+  '..1133311...',
+  '.111111111..',
+  '.113311111..',
+  '..11331111..',
+  '..1133311...',
+  '...113311...',
+  '...113311...',
+  '....11.11...',
+  '....11.11...',
+  '...111.111..',
+  '...111.111..',
+];
+
+function drawSprite(cx,x,y,data,pal,flip){
+  for(let r=0;r<data.length;r++){
+    const row=data[r];
+    for(let c=0;c<row.length;c++){
+      const ch=row[c];
+      if(ch!=='.'&&ch!==' '){
+        const ci=parseInt(ch);
+        if(ci>=0&&ci<pal.length){
+          const col=pal[ci];
+          cx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+          const px=flip?(row.length-1-c):c;
+          cx.fillRect(x+px,y+r,1,1);
+        }
+      }
+    }
+  }
+}
+
+// Creature sprites (battle size ~32x32)
+function drawCreatureSprite(cx,x,y,species,pal,scale,flip){
+  scale=scale||1;
+  const patterns=CREATURE_PATTERNS[species];
+  if(!patterns)return;
+  for(let r=0;r<patterns.length;r++){
+    const row=patterns[r];
+    for(let c=0;c<row.length;c++){
+      const ch=row[c];
+      if(ch!=='.'&&ch!==' '){
+        const ci=parseInt(ch);
+        if(ci>=0&&ci<pal.length){
+          const col=pal[ci];
+          cx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+          const px=flip?(row.length-1-c):c;
+          cx.fillRect(x+px*scale,y+r*scale,scale,scale);
+        }
+      }
+    }
+  }
+}
+
+// 32x32 creature sprite patterns
+const CREATURE_PATTERNS=[
+  // EMBERON (fire lizard)
+  [
+    '........1111............',
+    '.......123321...........',
+    '......12222221..........',
+    '.....122222221..........',
+    '....1222222221..........',
+    '...12222332221..........',
+    '..122223333221..........',
+    '..122233333221..........',
+    '.1122233332211..........',
+    '.1112233221111..........',
+    '..111222111.11..........',
+    '..111221111..1..........',
+    '...11111111..1..........',
+    '...1111.111..1..........',
+    '...111...111.1..........',
+    '...111....1133..........',
+    '...111....1133..........',
+    '...111....1.33..........',
+    '...11.....1..3..........',
+    '..111.........3.........',
+    '..111..........3........',
+    '..111..........33.......',
+    '.1111...........33......',
+    '.111.............3......',
+  ],
+  // TIDALIN (water serpent)
+  [
+    '..........111111........',
+    '........11222211........',
+    '.......1222222211.......',
+    '......122222222211......',
+    '.....12222233222211.....',
+    '....1222233332222211....',
+    '...122223333322222211...',
+    '..12222333333222222211..',
+    '..12223333332222222211..',
+    '.122233333222222222211..',
+    '.12233332222222222221...',
+    '.1233322222222222221....',
+    '.123322222222222211.....',
+    '..13222222222222211.....',
+    '...1222222222221111.....',
+    '....122222222111........',
+    '....12222221111.........',
+    '.....1222211............',
+    '......12211.............',
+    '.......111..............',
+    '........1...............',
+    '........................',
+    '........................',
+    '........................',
+  ],
+  // TERRAVOLT (earth golem)
+  [
+    '.......11111111.........',
+    '......1222222211........',
+    '.....122233322211.......',
+    '....12223333322211......',
+    '...1222333333322211.....',
+    '..12223333333322211.....',
+    '..12233333333332211.....',
+    '.122333311133332211.....',
+    '.122333111113332211.....',
+    '.122333111113332211.....',
+    '.122333311133332211.....',
+    '.12233333333332211.....',
+    '..1223333333322211.....',
+    '..1122333333322211.....',
+    '...112233332221111.....',
+    '....1122332221111......',
+    '.....112222111.........',
+    '......112211...........',
+    '.....1111111...........',
+    '....111..111...........',
+    '...111....111..........',
+    '..1111....1111.........',
+    '..111......111.........',
+    '..11........11.........',
+  ],
+  // ZAPPIX (electric fox)
+  [
+    '..11...........11.......',
+    '.1221.........1221......',
+    '12221.........12221.....',
+    '12221.........12221.....',
+    '.12221.......12221.....',
+    '..12221.....12221......',
+    '...1222111112221.......',
+    '....122222222211.......',
+    '.....12222222211.......',
+    '....1222233222211......',
+    '...12222333322211......',
+    '..122223333322211......',
+    '..122233333322211......',
+    '..122233333322211......',
+    '...12233332222211......',
+    '....122222222211.......',
+    '....122222222211.......',
+    '.....1222222211........',
+    '......12222211.........',
+    '.......112211..........',
+    '......111.111..........',
+    '.....111...111.........',
+    '....1111...1111........',
+    '....111.....111........',
+  ],
+  // SHADRIX (shadow bat)
+  [
+    '11..........11..........',
+    '1211......1121..........',
+    '12211....122211.........',
+    '.12211..1222211.........',
+    '..1222112222211.........',
+    '...122222222211.........',
+    '....12222222211.........',
+    '...1222233222211........',
+    '..12222333322211........',
+    '.122223333322211........',
+    '.122233333332211........',
+    '..12233333322211........',
+    '...1223333322211........',
+    '....122333222211........',
+    '.....12222222211........',
+    '......1222222211........',
+    '.......122222211........',
+    '........12222211........',
+    '.........1222211........',
+    '..........11111.........',
+    '..........1..1..........',
+    '..........1..1..........',
+    '.........11..11.........',
+    '.........1....1.........',
+  ],
+  // LUMINOS (light moth)
+  [
+    '........1111............',
+    '.......122211...........',
+    '......12222211..........',
+    '.11..122222211..11......',
+    '1221.12222221.1221......',
+    '12221122222111222211....',
+    '122221122211122222211...',
+    '.122221122112222222211..',
+    '..122221112222222221...',
+    '...12222222222222211....',
+    '....1222233222222211....',
+    '.....12233322222211.....',
+    '......1233322222211.....',
+    '.....122333322222211....',
+    '....12223333222222211...',
+    '...1222233322222222211..',
+    '..12222222222222222211..',
+    '.122222222222222222211..',
+    '.12222222222222222211...',
+    '..1222222222222222211...',
+    '...122222222222222211...',
+    '....12222222222222211...',
+    '.....1222222222222211...',
+    '......111111111111......',
+  ],
+];
+
+// Overworld creature sprites (tiny 16x16)
+function drawCreatureIcon(cx,x,y,species,pal){
+  const icons=CREATURE_ICONS[species];
+  if(!icons)return;
+  for(let r=0;r<icons.length;r++){
+    const row=icons[r];
+    for(let c=0;c<row.length;c++){
+      if(row[c]!=='.'){
+        const ci=parseInt(row[c]);
+        const col=pal[Math.min(ci,pal.length-1)];
+        cx.fillStyle=`rgb(${col[0]},${col[1]},${col[2]})`;
+        cx.fillRect(x+c,y+r,1,1);
+      }
+    }
+  }
+}
+
+const CREATURE_ICONS=[
+  // EMBERON mini
+  ['..11....','..121...','..1221..','..12221.','..11221.','...1121.','...111..','....11..'],
+  // TIDALIN mini
+  ['...111..','..1221..','..12221.','..12221.','...1221.','....121.','....111.','......1.'],
+  // TERRAVOLT mini
+  ['..1111..','..1221..','..1331..','..1331..','..1221..','..1111..','..11.11.','..1...1.'],
+  // ZAPPIX mini
+  ['.1...1..','..1.1...','..121...','..1321..','..1321..','..1221..','...11...','..1..1..'],
+  // SHADRIX mini
+  ['1.....1.','.11.11..','..1221..','..1321..','..1221..','...121..','...111..','...1.1..'],
+  // LUMINOS mini
+  ['...11...','..1221..','.122221.','..1321..','..1321..','.122221.','..1221..','...11...'],
+];
+
+// ═══════════════════════════════════════════════════════════
+// TILE RENDERING & ZONE GENERATION
+// ═══════════════════════════════════════════════════════════
+
+const TILE={GRASS:0,TALL_GRASS:1,WALL:2,PATH:3,WATER:4,DOOR:5,
+  GYM_FLOOR:6,BOSS:7,VENDOR:8,ROCK:9};
+
+const TILE_SOLID={2:true,4:true,9:true}; // wall, water, rock
+const TILE_ENCOUNTER={1:true}; // tall grass
+
+function tileColor(t,px,py){
+  // Returns a single color for a pixel position within a tile
+  const lx=px%8,ly=py%8;
+  switch(t){
+    case TILE.GRASS:
+      if((lx+ly)%7===0)return PAL.GRASS[2];
+      if((lx*3+ly*5)%11===0)return PAL.GRASS[1];
+      return PAL.GRASS[0];
+    case TILE.TALL_GRASS:
+      if(ly%2===0)return(lx%2===0)?PAL.TALL_GRASS[1]:PAL.TALL_GRASS[2];
+      return(lx%2===0)?PAL.TALL_GRASS[2]:PAL.TALL_GRASS[0];
+    case TILE.WALL:
+      if(lx===0||ly===0)return PAL.TREE[3];
+      if(ly<3)return PAL.TREE[1];
+      return PAL.TREE[2];
+    case TILE.PATH:
+      if((lx+ly)%5===0)return PAL.PATH[1];
+      return PAL.PATH[0];
+    case TILE.WATER:{
+      const wave=(lx+ly+Math.floor(Date.now()/400))%4;
+      return PAL.WATER[wave];
+    }
+    case TILE.DOOR:
+      if(lx<1||lx>6||ly<1)return PAL.GYM[3];
+      if(ly<3)return PAL.GYM[2];
+      return PAL.ACCENT[1];
+    case TILE.GYM_FLOOR:
+      if(lx===0||ly===0)return PAL.GYM[1];
+      if((lx+ly)%2===0)return PAL.GYM[0];
+      return PAL.GYM[1];
+    case TILE.BOSS:{
+      // Skull icon on dark bg
+      const skull=[0,0x3C,0x7E,0xDB,0xFF,0x7E,0x24,0x3C];
+      if(skull[ly]&(0x80>>lx))return PAL.FIRE[1];
+      return PAL.GYM[2];
+    }
+    case TILE.VENDOR:
+      // Shop sign
+      if(ly<2)return PAL.ACCENT[0];
+      if(ly<6){
+        if(lx<1||lx>6)return PAL.ACCENT[2];
+        if(ly===3&&lx>=2&&lx<=5)return PAL.ACCENT[3];
+        return PAL.ACCENT[1];
+      }
+      if(lx===3||lx===4)return PAL.TREE[2];
+      return PAL.GRASS[0];
+    case TILE.ROCK:{
+      const rd=Math.abs(lx-3.5)+Math.abs(ly-3.5);
+      if(rd<2)return PAL.GYM[1];
+      if(rd<3.5)return PAL.GYM[2];
+      if(rd<4.5)return PAL.GYM[3];
+      return PAL.GRASS[0];
+    }
+    default:return PAL.GRASS[0];
+  }
+}
+
+function drawTile(cx,sx,sy,t){
+  for(let ly=0;ly<8;ly++){
+    for(let lx=0;lx<8;lx++){
+      const c=tileColor(t,lx,ly);
+      cx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`;
+      cx.fillRect(sx+lx,sy+ly,1,1);
+    }
+  }
+}
+
+// Zone themes
+const ZONE_THEMES=['WASTELAND','SWAMPLAND','MOUNTAINS','STORM PLAINS','DARK HOLLOW','HOLY RUINS'];
+
+function zoneThemePals(zoneNum){
+  // Shift grass/path palette based on zone
+  const t=zoneNum%6;
+  return t;
+}
+
+// ── Zone Generation ───────────────────────────────────────
+function generateZone(zoneNum){
+  const zone={
+    num:zoneNum,
+    theme:zoneNum%6,
+    map:[], // MAP_H x MAP_W
+    gymMap:[], // ROWS x COLS
+    entryX:2,entryY:MAP_H-3,
+    gymX:0,gymY:0,
+    bossX:0,bossY:0,
+    baseLevel:3+zoneNum*4,
+    bossDefeated:false,
+  };
+
+  // Initialize map with grass
+  for(let y=0;y<MAP_H;y++){
+    zone.map[y]=[];
+    for(let x=0;x<MAP_W;x++){
+      zone.map[y][x]=TILE.GRASS;
+    }
+  }
+
+  // Border walls
+  for(let x=0;x<MAP_W;x++){zone.map[0][x]=TILE.WALL;zone.map[MAP_H-1][x]=TILE.WALL}
+  for(let y=0;y<MAP_H;y++){zone.map[y][0]=TILE.WALL;zone.map[y][MAP_W-1]=TILE.WALL}
+
+  // Generate main path from entry to gym
+  const gymX=rngRange(10,MAP_W-10);
+  const gymY=rngRange(4,10);
+  zone.gymX=gymX;zone.gymY=gymY;
+
+  // Carve path
+  let cx=zone.entryX,cy=zone.entryY;
+  while(cy>gymY+2||Math.abs(cx-gymX)>2){
+    // Path tile
+    for(let dx=-1;dx<=1;dx++){
+      for(let dy=-1;dy<=1;dy++){
+        const nx=cx+dx,ny=cy+dy;
+        if(nx>0&&nx<MAP_W-1&&ny>0&&ny<MAP_H-1){
+          zone.map[ny][nx]=TILE.PATH;
+        }
+      }
+    }
+    // Move toward gym
+    if(rngChance(60)&&cy>gymY+2){
+      cy--;
+    }else if(cx<gymX){
+      cx++;
+    }else if(cx>gymX){
+      cx--;
+    }else{
+      cy--;
+    }
+  }
+
+  // Place gym door
+  zone.map[gymY][gymX]=TILE.DOOR;
+  zone.map[gymY][gymX-1]=TILE.WALL;
+  zone.map[gymY][gymX+1]=TILE.WALL;
+  zone.map[gymY-1][gymX-1]=TILE.WALL;
+  zone.map[gymY-1][gymX]=TILE.WALL;
+  zone.map[gymY-1][gymX+1]=TILE.WALL;
+
+  // Place vendor near entry
+  zone.map[zone.entryY-2][zone.entryX+3]=TILE.VENDOR;
+  zone.map[zone.entryY-2][zone.entryX+2]=TILE.PATH;
+  zone.map[zone.entryY-1][zone.entryX+3]=TILE.PATH;
+
+  // Scatter tall grass
+  for(let y=2;y<MAP_H-2;y++){
+    for(let x=2;x<MAP_W-2;x++){
+      if(zone.map[y][x]===TILE.GRASS&&rngChance(35)){
+        zone.map[y][x]=TILE.TALL_GRASS;
+      }
+    }
+  }
+
+  // Scatter rocks
+  for(let i=0;i<8+zoneNum*2;i++){
+    const rx=rngRange(3,MAP_W-4);
+    const ry=rngRange(3,MAP_H-4);
+    if(zone.map[ry][rx]===TILE.GRASS||zone.map[ry][rx]===TILE.TALL_GRASS){
+      zone.map[ry][rx]=TILE.ROCK;
+    }
+  }
+
+  // Water features
+  if(zone.theme===1||rngChance(40)){ // Swampland or random
+    const wx=rngRange(5,MAP_W-10);
+    const wy=rngRange(8,MAP_H-10);
+    for(let dy=-2;dy<=2;dy++){
+      for(let dx=-3;dx<=3;dx++){
+        if(Math.abs(dx)+Math.abs(dy)<=3){
+          const nx=wx+dx,ny=wy+dy;
+          if(nx>1&&nx<MAP_W-2&&ny>1&&ny<MAP_H-2&&zone.map[ny][nx]!==TILE.PATH){
+            zone.map[ny][nx]=TILE.WATER;
+          }
+        }
+      }
+    }
+  }
+
+  // Optional branch paths with rewards
+  for(let b=0;b<2;b++){
+    const bx=rngRange(5,MAP_W-5);
+    const by=rngRange(5,MAP_H-5);
+    if(zone.map[by][bx]===TILE.GRASS||zone.map[by][bx]===TILE.TALL_GRASS){
+      // Small clearing
+      for(let dy=-1;dy<=1;dy++){
+        for(let dx=-1;dx<=1;dx++){
+          const nx=bx+dx,ny=by+dy;
+          if(nx>1&&nx<MAP_W-2&&ny>1&&ny<MAP_H-2){
+            zone.map[ny][nx]=TILE.PATH;
+          }
+        }
+      }
+    }
+  }
+
+  // Generate gym interior
+  for(let y=0;y<ROWS;y++){
+    zone.gymMap[y]=[];
+    for(let x=0;x<COLS;x++){
+      if(y===0||y===ROWS-1||x===0||x===COLS-1){
+        zone.gymMap[y][x]=TILE.WALL;
+      }else{
+        zone.gymMap[y][x]=TILE.GYM_FLOOR;
+      }
+    }
+  }
+
+  // Gym boss position
+  zone.bossX=COLS/2|0;
+  zone.bossY=3;
+  zone.gymMap[zone.bossY][zone.bossX]=TILE.BOSS;
+
+  // Gym door (exit)
+  zone.gymMap[ROWS-1][COLS/2|0]=TILE.DOOR;
+
+  // Gym obstacles
+  for(let i=0;i<4;i++){
+    const ox=rngRange(3,COLS-4);
+    const oy=rngRange(5,ROWS-4);
+    zone.gymMap[oy][ox]=TILE.ROCK;
+  }
+
+  // Gym tall grass
+  for(let y=4;y<ROWS-2;y++){
+    for(let x=2;x<COLS-2;x++){
+      if(zone.gymMap[y][x]===TILE.GYM_FLOOR&&rngChance(25)){
+        zone.gymMap[y][x]=TILE.TALL_GRASS;
+      }
+    }
+  }
+
+  return zone;
+}
+
+function encounterRate(zoneNum){return 15+zoneNum*2}
+
+// ═══════════════════════════════════════════════════════════
+// GEAR & SHOP SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+const GEAR_DB=[
+  {name:'IRON CLAW',  cost:60,  slot:0,bonus:{atk:3},desc:'ATK+3'},
+  {name:'STEEL FANG', cost:120, slot:0,bonus:{atk:6},desc:'ATK+6'},
+  {name:'FURY BLADE', cost:200, slot:0,bonus:{atk:10},desc:'ATK+10'},
+  {name:'WARP EDGE',  cost:300, slot:0,bonus:{atk:8,spd:4},desc:'ATK+8 SPD+4'},
+  {name:'BONE CHARM', cost:50,  slot:1,bonus:{def:3},desc:'DEF+3'},
+  {name:'WARD STONE', cost:100, slot:1,bonus:{def:5,hp:10},desc:'DEF+5 HP+10'},
+  {name:'VENOM RING', cost:80,  slot:1,bonus:{atk:2},desc:'ATK+2 Poison+10%',special:'poison'},
+  {name:'STUN BAND',  cost:80,  slot:1,bonus:{spd:3},desc:'SPD+3 Stun+10%',special:'stun'},
+  {name:'LIFE GEM',   cost:150, slot:1,bonus:{hp:20},desc:'HP+20'},
+  {name:'SPEED WING', cost:130, slot:1,bonus:{spd:6},desc:'SPD+6'},
+  {name:'HOLY SEAL',  cost:250, slot:1,bonus:{def:8,hp:15},desc:'DEF+8 HP+15'},
+  {name:'DARK SIGIL', cost:220, slot:1,bonus:{atk:6,spd:4},desc:'ATK+6 SPD+4'},
+];
+
+const CONSUMABLES=[
+  {name:'HEAL SALVE', cost:30, fx:'heal', val:30, desc:'Heal 30 HP'},
+  {name:'MEGA SALVE', cost:80, fx:'heal', val:80, desc:'Heal 80 HP'},
+  {name:'SP ETHER',   cost:40, fx:'sp',   val:20, desc:'Restore 20 SP'},
+  {name:'ANTIDOTE',   cost:20, fx:'cure',val:0,   desc:'Cure Poison'},
+  {name:'POKEBALL',   cost:50, fx:'ball', val:20, desc:'Catch+20%'},
+];
+
+// Generate shop inventory for a zone
+function genShopInventory(zoneNum){
+  const items=[];
+  const tier=Math.min(3,Math.floor(zoneNum/2));
+
+  // 3-5 gear items scaled to tier
+  const gearCount=rngRange(3,5);
+  const availGear=GEAR_DB.filter(g=>g.cost<=100+zoneNum*60);
+  for(let i=0;i<gearCount&&availGear.length>0;i++){
+    const idx=rngRange(0,availGear.length-1);
+    items.push({type:'gear',data:availGear[idx]});
+    availGear.splice(idx,1);
+  }
+
+  // Consumables
+  items.push({type:'item',data:CONSUMABLES[0]});
+  if(zoneNum>=1)items.push({type:'item',data:CONSUMABLES[1]});
+  items.push({type:'item',data:CONSUMABLES[2]});
+  items.push({type:'item',data:CONSUMABLES[3]});
+  if(zoneNum>=1)items.push({type:'item',data:CONSUMABLES[4]});
+
+  return items;
+}
+
+// ═══════════════════════════════════════════════════════════
+// SKILL TREE SYSTEM
+// ═══════════════════════════════════════════════════════════
+
+const CHAR_SKILLS=[
+  {id:0,name:'CHA +1',desc:'Command +1'},
+  {id:1,name:'WIS +1',desc:'Wisdom +1'},
+  {id:2,name:'LCK +1',desc:'Luck +1'},
+  {id:3,name:'CON +1',desc:'Constitution +1'},
+  {id:4,name:'IRON HALO',desc:'Creature -10% dmg'},
+  {id:5,name:'BATTLE CRY',desc:'+15% ATK 3 turns'},
+  {id:6,name:'TACTICAL',desc:'Win speed ties'},
+  {id:7,name:'VET\'S EYE',desc:'+10% catch rate'},
+  {id:8,name:'BLESSED',desc:'Ignore 10% DEF'},
+  {id:9,name:'EMP LIGHT',desc:'+15% XP gained'},
+  {id:10,name:'WAR TROPHY',desc:'+20% gold'},
+  {id:11,name:'ARTIFICER',desc:'Gear bonuses +50%'},
+];
+
+const CREA_SKILLS=[
+  {id:0,name:'ATK +2',desc:'Attack +2'},
+  {id:1,name:'DEF +2',desc:'Defense +2'},
+  {id:2,name:'SPD +2',desc:'Speed +2'},
+  {id:3,name:'HP +5',desc:'Max HP +5'},
+  {id:4,name:'THICK HIDE',desc:'-2 flat dmg taken'},
+  {id:5,name:'FURY',desc:'+25% ATK <50% HP'},
+  {id:6,name:'REGEN',desc:'Heal 5%/turn'},
+  {id:7,name:'TYPE MASTER',desc:'STAB +25%'},
+  {id:8,name:'EVASION',desc:'10% dodge'},
+  {id:9,name:'TOUGHNESS',desc:'Max HP +10'},
+  {id:10,name:'COUNTER',desc:'Reflect 20% dmg'},
+  {id:11,name:'QUICK STRIKE',desc:'Speed +3'},
+];
+
+function genCharSkillOptions(){
+  const opts=[];
+  for(let i=0;i<3;i++){
+    let id;
+    do{
+      if(rngChance(50)){id=rngRange(0,3)}
+      else{id=rngRange(4,CHAR_SKILLS.length-1)}
+    }while(opts.some(o=>o.id===id));
+    opts.push(CHAR_SKILLS[id]);
+  }
+  return opts;
+}
+
+function genCreatureSkillOptions(creature){
+  const opts=[];
+  for(let i=0;i<3;i++){
+    const roll=rngRange(0,99);
+    if(roll<35){
+      // Stat boost
+      let id;
+      do{id=rngRange(0,3)}while(opts.some(o=>!o.isMove&&o.id===id));
+      opts.push({...CREA_SKILLS[id],isMove:false});
+    }else if(roll<65&&creature.moves.length<MAX_MOVES){
+      // New move
+      let moveId;
+      do{
+        if(rngChance(60)){
+          const tier=rngRange(0,2);
+          if(creature.type<ELEM.NORMAL){
+            moveId=1+creature.type+tier*6;
+            if(moveId>=19)moveId=19;
+          }else{
+            moveId=rngRange(19,21);
+          }
+        }else{
+          moveId=rngRange(0,MOVES.length-1);
+        }
+      }while(creature.moves.includes(moveId)||opts.some(o=>o.isMove&&o.moveId===moveId));
+      opts.push({id:0,name:MOVES[moveId].name,desc:'Learn '+MOVES[moveId].name,isMove:true,moveId:moveId});
+    }else{
+      // Passive
+      let id;
+      do{id=rngRange(4,CREA_SKILLS.length-1)}while(opts.some(o=>!o.isMove&&o.id===id));
+      opts.push({...CREA_SKILLS[id],isMove:false});
+    }
+  }
+  // Ensure we have 3 options
+  while(opts.length<3){
+    let id;
+    do{id=rngRange(0,3)}while(opts.some(o=>!o.isMove&&o.id===id));
+    opts.push({...CREA_SKILLS[id],isMove:false});
+  }
+  return opts;
+}
+
+function applyCharSkill(ch,skill){
+  ch.skills.push(skill.id);
+  if(skill.id===0)ch.cha++;
+  if(skill.id===1)ch.wis++;
+  if(skill.id===2)ch.lck++;
+  if(skill.id===3)ch.con++;
+}
+
+function applyCreatureSkill(c,opt){
+  if(opt.isMove){
+    if(c.moves.length<MAX_MOVES){
+      c.moves.push(opt.moveId);
+    }
+  }else{
+    c.skills.push(opt.id);
+    if(opt.id===0)c.atk+=2;
+    if(opt.id===1)c.def+=2;
+    if(opt.id===2)c.spd+=2;
+    if(opt.id===3)c.maxHp+=5;
+    if(opt.id===9)c.maxHp+=10;
+    if(opt.id===11)c.spd+=3;
+    c.hp=Math.min(c.hp,c.maxHp);
+  }
+}
+
+// ═══════════════════════════════════════════════════════════
+// SAVE/LOAD SYSTEM (localStorage)
+// ═══════════════════════════════════════════════════════════
+
+function saveGame(){
+  try{
+    const data={
+      player:G.player,
+      creature:G.creature,
+      roster:G.roster,
+      zoneNum:G.zone?G.zone.num:0,
+      px:G.px,py:G.py,
+      inGym:G.inGym,
+      battlesWon:G.battlesWon,
+      creaturesCaught:G.creaturesCaught,
+      rng:rngState,
+      ver:2,
+    };
+    localStorage.setItem('imperialHunt',JSON.stringify(data));
+    return true;
+  }catch(e){return false}
+}
+
+function loadGame(){
+  try{
+    const raw=localStorage.getItem('imperialHunt');
+    if(!raw)return false;
+    const d=JSON.parse(raw);
+    if(!d||!d.ver)return false;
+    G.player=d.player;
+    G.creature=d.creature;
+    G.roster=d.roster||[];
+    G.battlesWon=d.battlesWon||0;
+    G.creaturesCaught=d.creaturesCaught||0;
+    rngState=d.rng||Date.now()&0xFFFF;
+    // Regenerate zone
+    const savedRng=rngState;
+    rngSeed(d.zoneNum*1337+42);
+    G.zone=generateZone(d.zoneNum);
+    rngState=savedRng;
+    G.px=d.px;G.py=d.py;G.inGym=d.inGym||false;
+    return true;
+  }catch(e){return false}
+}
+
+function hasSave(){
+  try{return!!localStorage.getItem('imperialHunt')}catch(e){return false}
+}
+
+// ═══════════════════════════════════════════════════════════
+// GAME STATE
+// ═══════════════════════════════════════════════════════════
+
+const G={
+  state:ST.TITLE,
+  player:null,
+  creature:null,
+  roster:[], // captured creatures
+  zone:null,
+  px:0,py:0,
+  dir:DIR.DOWN,
+  inGym:false,
+  battlesWon:0,
+  creaturesCaught:0,
+  // Battle state
+  battle:{
+    enemy:null,
+    isBoss:false,
+    subState:0,
+    sel:0,
+    moveSel:0,
+    turnOrder:[],
+    msg:'',
+    msgTimer:0,
+    shakeTimer:0,
+    shakeTarget:0, // 0=none,1=enemy,2=player
+    result:0,
+    xpReward:0,
+    goldReward:0,
+    wasStunned:false,
+    wasPoisoned:false,
+    catchBonus:0,
+  },
+  // Shop state
+  shop:{items:[],sel:0,scroll:0,msg:''},
+  // Skill state
+  skill:{options:[],sel:0,isCreature:false},
+  // Post-battle
+  post:{choice:0,enemy:null},
+  // UI
+  frame:0,
+  walkFrame:0,
+  moveTimer:0,
+  transition:0, // >0 = fading
+  transCallback:null,
+  msgQueue:[],
+  msgText:'',
+  msgLine2:'',
+  msgActive:false,
+  menuSel:0,
+};
+
+// ═══════════════════════════════════════════════════════════
+// SCREEN RENDERERS
+// ═══════════════════════════════════════════════════════════
+
+// ── Title Screen ──────────────────────────────────────────
+function renderTitle(){
+  // Dark background
+  fillRect(bctx,0,0,W,H,[8,8,16]);
+
+  // Title text
+  const t1='IMPERIAL HUNT';
+  drawTextShadow(bctx,(W-textWidth(t1))/2,20,t1,PAL.ACCENT,0,2);
+
+  const t2='A SPACE MARINE\'S';
+  drawText(bctx,(W-textWidth(t2))/2,40,t2,PAL.UI,1);
+  const t3='CREATURE QUEST';
+  drawText(bctx,(W-textWidth(t3))/2,50,t3,PAL.UI,1);
+
+  // Marine sprite
+  drawSprite(bctx,72,65,MARINE_DOWN,[rgb(0,0,0),PAL.MARINE[1],PAL.MARINE[2],PAL.ACCENT[0]]);
+
+  // Menu
+  const hasS=hasSave();
+  const y0=100;
+  drawText(bctx,48,y0,'NEW GAME',PAL.UI,G.menuSel===0?3:1);
+  if(hasS)drawText(bctx,48,y0+12,'CONTINUE',PAL.UI,G.menuSel===1?3:1);
+
+  // Cursor
+  drawText(bctx,36,y0+G.menuSel*12,'>',PAL.ACCENT,0);
+
+  // Press start hint
+  if(G.frame%60<40){
+    drawText(bctx,32,132,'PRESS START',PAL.UI,2);
+  }
+}
+
+function updateTitle(){
+  const hasS=hasSave();
+  const maxSel=hasS?1:0;
+
+  if(justPressed.up&&G.menuSel>0)G.menuSel--;
+  if(justPressed.down&&G.menuSel<maxSel)G.menuSel++;
+
+  if(justPressed.a||justPressed.start){
+    if(G.menuSel===1&&hasS){
+      // Continue
+      if(loadGame()){
+        G.state=ST.OVERWORLD;
+      }
+    }else{
+      // New game
+      G.state=ST.STARTER;
+      G.menuSel=0;
+    }
+  }
+}
+
+// ── Starter Selection ─────────────────────────────────────
+function renderStarter(){
+  fillRect(bctx,0,0,W,H,[8,8,16]);
+
+  drawTextShadow(bctx,8,4,'CHOOSE YOUR PARTNER',PAL.ACCENT,0,2);
+  drawText(bctx,8,16,'THE EMPEROR GRANTS',PAL.UI,1);
+  drawText(bctx,8,24,'YOU A COMPANION.',PAL.UI,1);
+
+  for(let i=0;i<3;i++){
+    const sp=SPECIES[i];
+    const y=40+i*32;
+    const sel=G.menuSel===i;
+    const pal=ELEM_PAL[sp.type];
+
+    // Highlight
+    if(sel)fillRect(bctx,4,y-2,152,28,[24,24,32]);
+
+    // Icon
+    drawCreatureIcon(bctx,8,y+2,i,pal);
+
+    // Name & type
+    drawText(bctx,28,y,sp.name,PAL.UI,sel?3:1);
+    drawText(bctx,28,y+10,ELEM_NAMES[sp.type]+' TYPE',pal,sel?0:2);
+    drawText(bctx,28,y+20,sp.ability,PAL.UI,2);
+
+    // Cursor
+    if(sel)drawText(bctx,0,y,'>',PAL.ACCENT,0);
+  }
+
+  drawText(bctx,16,136,'A: SELECT',PAL.UI,2);
+}
+
+function updateStarter(){
+  if(justPressed.up&&G.menuSel>0)G.menuSel--;
+  if(justPressed.down&&G.menuSel<2)G.menuSel++;
+
+  if(justPressed.a){
+    // Initialize game
+    G.player=createCharacter();
+    G.creature=createCreature(G.menuSel,5);
+    G.roster=[];
+    G.battlesWon=0;
+    G.creaturesCaught=0;
+
+    // Generate first zone
+    rngSeed(Date.now()&0xFFFF);
+    G.zone=generateZone(0);
+    G.px=G.zone.entryX;
+    G.py=G.zone.entryY;
+    G.inGym=false;
+    G.dir=DIR.DOWN;
+
+    // Go to shop first
+    G.state=ST.SHOP;
+    G.shop.items=genShopInventory(0);
+    G.shop.sel=0;
+    G.shop.scroll=0;
+    G.menuSel=0;
+
+    showMsg(G.creature.name+' JOINS YOU!','FOR THE EMPEROR!');
+  }
+}
+
+// ── Overworld ─────────────────────────────────────────────
+function renderOverworld(){
+  const map=G.inGym?G.zone.gymMap:G.zone.map;
+  const mw=G.inGym?COLS:MAP_W;
+  const mh=G.inGym?ROWS:MAP_H;
+
+  let camX,camY;
+  if(G.inGym){
+    camX=0;camY=0;
+  }else{
+    camX=G.px*8-80;camY=G.py*8-72;
+    camX=Math.max(0,Math.min(camX,(mw-COLS)*8));
+    camY=Math.max(0,Math.min(camY,(mh-ROWS)*8));
+  }
+
+  // Draw tiles
+  const startTX=Math.floor(camX/8);
+  const startTY=Math.floor(camY/8);
+  const offX=camX%8;
+  const offY=camY%8;
+
+  for(let ty=0;ty<=ROWS;ty++){
+    for(let tx=0;tx<=COLS;tx++){
+      const mx=startTX+tx;
+      const my=startTY+ty;
+      if(mx>=0&&mx<mw&&my>=0&&my<mh){
+        drawTile(bctx,tx*8-offX,ty*8-offY,map[my][mx]);
+      }
+    }
+  }
+
+  // Draw player sprite
+  const sx=G.px*8-camX;
+  const sy=G.py*8-camY-4; // offset up slightly so feet align
+  let sprData;
+  switch(G.dir){
+    case DIR.DOWN:sprData=MARINE_DOWN;break;
+    case DIR.UP:sprData=MARINE_UP;break;
+    case DIR.LEFT:case DIR.RIGHT:sprData=MARINE_SIDE;break;
+  }
+  const flip=G.dir===DIR.LEFT;
+  const marinePal=[rgb(0,0,0),PAL.MARINE[1],PAL.MARINE[2],PAL.ACCENT[0]];
+
+  // Walking animation - bob
+  const bob=G.moveTimer>0?(G.walkFrame%2===0?-1:0):0;
+  drawSprite(bctx,sx-2,sy+bob-4,sprData,marinePal,flip);
+
+  // HUD overlay
+  drawBox(bctx,0,0,W,14);
+  drawText(bctx,4,3,'Z'+String(G.zone.num+1)+' '+ZONE_THEMES[G.zone.theme],PAL.UI,3);
+  const goldStr='$'+G.player.gold;
+  drawText(bctx,W-textWidth(goldStr)-4,3,goldStr,PAL.ACCENT,0);
+
+  // Mini creature status
+  if(G.creature){
+    drawBox(bctx,0,H-18,80,18);
+    drawText(bctx,4,H-15,G.creature.name.substring(0,7),PAL.UI,3);
+    drawHPBar(bctx,4,H-7,G.creature.hp,G.creature.maxHp,72);
+  }
+}
+
+function updateOverworld(){
+  if(G.msgActive)return;
+
+  if(G.moveTimer>0){
+    G.moveTimer--;
+    return;
+  }
+
+  // Start menu
+  if(justPressed.start||justPressed.select){
+    G.state=ST.MENU;
+    G.menuSel=0;
+    return;
+  }
+
+  let dx=0,dy=0;
+  if(keys.up){dy=-1;G.dir=DIR.UP}
+  else if(keys.down){dy=1;G.dir=DIR.DOWN}
+  else if(keys.left){dx=-1;G.dir=DIR.LEFT}
+  else if(keys.right){dx=1;G.dir=DIR.RIGHT}
+
+  if(dx===0&&dy===0)return;
+
+  const nx=G.px+dx;
+  const ny=G.py+dy;
+  const map=G.inGym?G.zone.gymMap:G.zone.map;
+  const mw=G.inGym?COLS:MAP_W;
+  const mh=G.inGym?ROWS:MAP_H;
+
+  if(nx<0||nx>=mw||ny<0||ny>=mh)return;
+
+  const tile=map[ny][nx];
+
+  // Solid check
+  if(TILE_SOLID[tile])return;
+
+  // Move
+  G.px=nx;G.py=ny;
+  G.walkFrame++;
+  G.moveTimer=4; // frames of movement delay
+
+  // Check tile interactions
+  if(tile===TILE.TALL_GRASS){
+    if(rngChance(encounterRate(G.zone.num))){
+      startBattle(false);
+      return;
+    }
+  }
+
+  if(tile===TILE.DOOR){
+    if(!G.inGym){
+      // Enter gym
+      G.inGym=true;
+      G.px=COLS/2|0;
+      G.py=ROWS-2;
+      showMsg('ENTERED THE GYM!','PREPARE FOR BATTLE');
+    }else{
+      // Exit gym
+      G.inGym=false;
+      G.px=G.zone.gymX;
+      G.py=G.zone.gymY+1;
+    }
+    return;
+  }
+
+  if(tile===TILE.BOSS&&!G.zone.bossDefeated){
+    showMsg('GYM LEADER','APPROACHES!');
+    startBattle(true);
+    return;
+  }
+
+  if(tile===TILE.VENDOR){
+    showMsg('WELCOME TO THE','IMPERIAL ARMORY!');
+    G.state=ST.SHOP;
+    G.shop.items=genShopInventory(G.zone.num);
+    G.shop.sel=0;
+    G.shop.scroll=0;
+    return;
+  }
+}
+
+// ── Battle System ─────────────────────────────────────────
+const BS={INTRO:0,MENU:1,MOVE_SEL:2,PLAYER_TURN:3,ENEMY_TURN:4,
+  CHECK_KO:5,WIN:6,LOSE:7,MSG:8,RUN:9};
+
+function startBattle(isBoss){
+  const b=G.battle;
+  b.isBoss=isBoss;
+
+  // Create enemy
+  let species,level;
+  if(isBoss){
+    species=G.zone.theme;
+    level=G.zone.baseLevel+5;
+    if(level>MAX_LEVEL)level=MAX_LEVEL;
+  }else{
+    species=rngChance(60)?G.zone.theme:rngRange(0,SPECIES.length-1);
+    level=G.zone.baseLevel+rngRange(-2,2);
+    level=Math.max(1,Math.min(MAX_LEVEL,level));
+  }
+
+  b.enemy=createCreature(species,level);
+
+  // Boss boost
+  if(isBoss){
+    b.enemy.maxHp+=15;b.enemy.hp=b.enemy.maxHp;
+    b.enemy.atk+=3;b.enemy.def+=3;
+    // Give boss extra moves
+    if(b.enemy.moves.length<4){
+      const t=b.enemy.type;
+      if(t<ELEM.NORMAL){
+        if(!b.enemy.moves.includes(7+t))b.enemy.moves.push(7+t);
+        if(b.enemy.moves.length<4&&!b.enemy.moves.includes(13+t))b.enemy.moves.push(13+t);
+      }
+      if(b.enemy.moves.length<4)b.enemy.moves.push(19); // STRIKE
+    }
+  }else{
+    // Wild creatures in later zones get extra moves
+    if(G.zone.num>=2&&b.enemy.moves.length<4){
+      const t=b.enemy.type;
+      if(t<ELEM.NORMAL&&!b.enemy.moves.includes(7+t))b.enemy.moves.push(7+t);
+    }
+  }
+
+  b.subState=BS.INTRO;
+  b.sel=0;b.moveSel=0;
+  b.msg='';b.msgTimer=0;
+  b.shakeTimer=0;b.shakeTarget=0;
+  b.wasStunned=false;b.wasPoisoned=false;
+  b.catchBonus=0;
+
+  // Clear creature battle status
+  G.creature.poison=0;G.creature.stun=0;G.creature.shield=0;G.creature.atkBuff=0;
+  b.enemy.poison=0;b.enemy.stun=0;b.enemy.shield=0;b.enemy.atkBuff=0;
+
+  G.state=ST.BATTLE;
+}
+
+function renderBattle(){
+  const b=G.battle;
+  const pc=G.creature;
+  const ec=b.enemy;
+
+  // Background
+  fillRect(bctx,0,0,W,H,[32,32,40]);
+
+  // Battle arena floor
+  fillRect(bctx,0,60,W,30,[48,48,56]);
+  fillRect(bctx,0,90,W,2,[40,40,48]);
+
+  // Enemy creature (top-right)
+  const ePal=ELEM_PAL[ec.type];
+  let eShakeX=0;
+  if(b.shakeTimer>0&&b.shakeTarget===1){
+    eShakeX=Math.sin(b.shakeTimer*1.5)*3;
+  }
+  drawCreatureSprite(bctx,95+eShakeX,8,ec.species,ePal,1,false);
+
+  // Player creature (bottom-left)
+  const pPal=ELEM_PAL[pc.type];
+  let pShakeX=0;
+  if(b.shakeTimer>0&&b.shakeTarget===2){
+    pShakeX=Math.sin(b.shakeTimer*1.5)*3;
+  }
+  drawCreatureSprite(bctx,8+pShakeX,40,pc.species,pPal,1,true);
+
+  // Enemy info box (top-left)
+  drawBox(bctx,0,0,95,26);
+  drawText(bctx,4,3,ec.name.substring(0,9),PAL.UI,3);
+  drawText(bctx,4,11,'LV'+ec.level,PAL.UI,2);
+  if(b.isBoss)drawText(bctx,40,11,'BOSS',PAL.FIRE,0);
+  drawHPBar(bctx,4,19,ec.hp,ec.maxHp,87);
+  // Status icons
+  if(ec.poison>0)drawText(bctx,75,11,'P',PAL.E_SHADOW,2);
+  if(ec.stun>0)drawText(bctx,83,11,'S',PAL.E_ELEC,0);
+
+  // Player info box (bottom area)
+  drawBox(bctx,60,92,100,24);
+  drawText(bctx,64,95,pc.name.substring(0,9),PAL.UI,3);
+  drawText(bctx,64,103,'LV'+pc.level,PAL.UI,2);
+  drawHPBar(bctx,100,95,pc.hp,pc.maxHp,56);
+  drawSPBar(bctx,100,103,pc.sp,pc.maxSp,56);
+  // Status icons
+  if(pc.poison>0)drawText(bctx,92,103,'P',PAL.E_SHADOW,2);
+  if(pc.stun>0)drawText(bctx,84,103,'S',PAL.E_ELEC,0);
+  if(pc.shield>0)drawText(bctx,76,103,'D',PAL.E_LIGHT,0);
+
+  // Bottom panel
+  if(b.subState===BS.MENU){
+    drawBox(bctx,0,118,W,26);
+    const opts=['FIGHT','RUN','STATUS','GUARD'];
+    for(let i=0;i<4;i++){
+      const col=i%2;const row=Math.floor(i/2);
+      const x=8+col*76;const y=122+row*10;
+      drawText(bctx,x,y,opts[i],PAL.UI,b.sel===i?3:1);
+      if(b.sel===i)drawText(bctx,x-8,y,'>',PAL.ACCENT,0);
+    }
+  }else if(b.subState===BS.MOVE_SEL){
+    drawBox(bctx,0,118,W,26);
+    for(let i=0;i<pc.moves.length;i++){
+      const mv=MOVES[pc.moves[i]];
+      const col=i%2;const row=Math.floor(i/2);
+      const x=8+col*76;const y=122+row*10;
+      const canUse=pc.sp>=mv.sp;
+      drawText(bctx,x,y,mv.name.substring(0,8),canUse?PAL.UI:[160,160,160],b.moveSel===i?3:1);
+      if(b.moveSel===i)drawText(bctx,x-8,y,'>',PAL.ACCENT,0);
+    }
+    // SP cost display
+    if(pc.moves[b.moveSel]!==undefined){
+      const mv=MOVES[pc.moves[b.moveSel]];
+      drawText(bctx,4,140,'SP:'+mv.sp+' POW:'+mv.pow,PAL.UI,2);
+    }
+  }else{
+    // Message box
+    drawBox(bctx,0,118,W,26);
+    if(b.msg){
+      drawText(bctx,8,124,b.msg,PAL.UI,3);
+    }
+  }
+
+  // Impact particles
+  if(b.shakeTimer>0){
+    for(let i=0;i<3;i++){
+      const px=b.shakeTarget===1?(110+rngRange(-10,10)):(30+rngRange(-10,10));
+      const py=b.shakeTarget===1?(30+rngRange(-8,8)):(60+rngRange(-8,8));
+      fillRect(bctx,px,py,2,2,PAL.ACCENT[0]);
+    }
+  }
+}
+
+function updateBattle(){
+  const b=G.battle;
+  const pc=G.creature;
+  const ec=b.enemy;
+
+  // Handle shake
+  if(b.shakeTimer>0)b.shakeTimer--;
+
+  // Message timer
+  if(b.msgTimer>0){
+    b.msgTimer--;
+    if(b.msgTimer===0){
+      battleAdvance();
+    }
+    return;
+  }
+
+  switch(b.subState){
+    case BS.INTRO:
+      b.msg=(b.isBoss?'BOSS ':'WILD ')+ec.name+' APPEARED!';
+      b.msgTimer=60;
+      b.subState=BS.MSG;
+      b._afterMsg=BS.MENU;
+      break;
+
+    case BS.MENU:
+      // 2x2 menu: FIGHT, RUN, STATUS, GUARD
+      if(justPressed.up&&b.sel>=2)b.sel-=2;
+      if(justPressed.down&&b.sel<2)b.sel+=2;
+      if(justPressed.left&&b.sel%2===1)b.sel--;
+      if(justPressed.right&&b.sel%2===0)b.sel++;
+      b.sel=Math.max(0,Math.min(3,b.sel));
+
+      if(justPressed.a){
+        if(b.sel===0){
+          // FIGHT - go to move select
+          b.subState=BS.MOVE_SEL;
+          b.moveSel=0;
+        }else if(b.sel===1){
+          // RUN
+          if(!b.isBoss&&rngChance(60+pc.spd-ec.spd)){
+            b.msg='GOT AWAY SAFELY!';
+            b.msgTimer=40;
+            b.subState=BS.MSG;
+            b._afterMsg=BS.RUN;
+          }else{
+            b.msg=b.isBoss?'CAN\'T RUN FROM BOSS!':'COULDN\'T ESCAPE!';
+            b.msgTimer=40;
+            b.subState=BS.MSG;
+            b._afterMsg=BS.ENEMY_TURN;
+          }
+        }else if(b.sel===2){
+          // STATUS - just show info
+          b.msg='ATK:'+pc.atk+' DEF:'+pc.def+' SPD:'+pc.spd;
+          b.msgTimer=60;
+          b.subState=BS.MSG;
+          b._afterMsg=BS.MENU;
+        }else{
+          // GUARD - use guard move
+          executeTurn(22,true); // GUARD move
+        }
+      }
+      if(justPressed.b){
+        // Back does nothing in main menu
+      }
+      break;
+
+    case BS.MOVE_SEL:
+      if(justPressed.up&&b.moveSel>=2)b.moveSel-=2;
+      if(justPressed.down&&b.moveSel<pc.moves.length-2)b.moveSel+=2;
+      if(justPressed.left&&b.moveSel%2===1)b.moveSel--;
+      if(justPressed.right&&b.moveSel%2===0&&b.moveSel<pc.moves.length-1)b.moveSel++;
+      b.moveSel=Math.max(0,Math.min(pc.moves.length-1,b.moveSel));
+
+      if(justPressed.a){
+        const mv=MOVES[pc.moves[b.moveSel]];
+        if(pc.sp>=mv.sp){
+          executeTurn(pc.moves[b.moveSel],false);
+        }else{
+          b.msg='NOT ENOUGH SP!';
+          b.msgTimer=30;
+          b.subState=BS.MSG;
+          b._afterMsg=BS.MOVE_SEL;
+        }
+      }
+      if(justPressed.b){
+        b.subState=BS.MENU;
+      }
+      break;
+
+    case BS.RUN:
+      healCreature(G.creature);
+      G.state=ST.OVERWORLD;
+      break;
+
+    case BS.WIN:
+      handleBattleWin();
+      break;
+
+    case BS.LOSE:
+      handleBattleLose();
+      break;
+  }
+}
+
+function executeTurn(playerMoveId,isGuard){
+  const b=G.battle;
+  const pc=G.creature;
+  const ec=b.enemy;
+
+  // Choose enemy move
+  const eMoveIdx=rngRange(0,ec.moves.length-1);
+  const eMoveId=ec.moves[eMoveIdx];
+
+  // Determine turn order by speed
+  let playerFirst=pc.spd>=ec.spd;
+  if(pc.spd===ec.spd)playerFirst=charHasSkill(G.player,6)||rngChance(50);
+
+  // Priority moves go first
+  const pMove=MOVES[playerMoveId];
+  const eMove=MOVES[eMoveId];
+  if(pMove.fx==='priority')playerFirst=true;
+  if(eMove.fx==='priority'&&pMove.fx!=='priority')playerFirst=false;
+
+  // Stun check
+  const pStunned=pc.stun>0&&rngChance(50);
+  const eStunned=ec.stun>0&&rngChance(50);
+
+  // Build turn sequence as message queue
+  const msgs=[];
+
+  function doMove(attacker,defender,moveId,isPlayer){
+    const mv=MOVES[moveId];
+    const aName=isPlayer?pc.name:ec.name;
+    const dName=isPlayer?ec.name:pc.name;
+
+    msgs.push({text:aName+' used '+mv.name+'!'});
+
+    if(mv.pow>0){
+      // Accuracy check
+      if(!rngChance(mv.acc)){
+        msgs.push({text:'It missed!'});
+        return;
+      }
+
+      // Evasion check
+      if(!isPlayer&&pc.skills.includes(8)&&rngChance(10)){
+        msgs.push({text:pc.name+' dodged!'});return;
+      }
+      if(isPlayer&&ec.skills&&ec.skills.includes&&ec.skills.includes(8)&&rngChance(10)){
+        msgs.push({text:ec.name+' dodged!'});return;
+      }
+
+      // Damage calc
+      let atk=isPlayer?pc.atk:ec.atk;
+      let def=isPlayer?ec.def:pc.def;
+
+      // Fury skill
+      const aHP=isPlayer?pc.hp:ec.hp;
+      const aMaxHP=isPlayer?pc.maxHp:ec.maxHp;
+      if((isPlayer?pc:ec).skills.includes(5)&&aHP<aMaxHP/2)atk=Math.floor(atk*1.25);
+
+      // ATK buff
+      if((isPlayer?pc:ec).atkBuff>0)atk=Math.floor(atk*1.15);
+
+      // Blessed (ignore DEF)
+      if(isPlayer&&charHasSkill(G.player,8))def=Math.floor(def*0.9);
+
+      // Iron Halo
+      if(!isPlayer&&charHasSkill(G.player,4)){
+        // Player creature takes less damage
+      }
+
+      // STAB
+      const stab=typeSTAB((isPlayer?pc:ec).type,mv.type);
+      // Type effectiveness
+      const eff=typeEffectiveness(mv.type,(isPlayer?ec:pc).type);
+
+      // Type mastery skill
+      let stabBonus=stab;
+      if((isPlayer?pc:ec).skills.includes(7)&&stab>100)stabBonus+=25;
+
+      let dmg=Math.floor((mv.pow*atk/def)*stabBonus/100*eff/100/3);
+
+      // Shield reduction
+      const target=isPlayer?ec:pc;
+      if(target.shield>0){
+        dmg=Math.floor(dmg*0.5);
+        target.shield--;
+      }
+
+      // Thick hide
+      if(target.skills.includes(4))dmg=Math.max(1,dmg-2);
+
+      // Iron halo
+      if(!isPlayer&&charHasSkill(G.player,4))dmg=Math.floor(dmg*0.9);
+
+      dmg=Math.max(1,dmg);
+
+      msgs.push({
+        text:dName+' -'+dmg+' HP!',
+        dmg:dmg,target:isPlayer?1:2, // 1=enemy 2=player creature
+      });
+
+      // Counter skill
+      if(target.skills.includes(10)&&mv.role===ROLE.STRIKE){
+        const counterDmg=Math.floor(dmg*0.2);
+        if(counterDmg>0){
+          msgs.push({text:dName+' countered! -'+counterDmg,dmg:counterDmg,target:isPlayer?2:1});
+        }
+      }
+
+      if(eff>100)msgs.push({text:'SUPER EFFECTIVE!'});
+      else if(eff<100)msgs.push({text:'Not very effective...'});
+
+      // Gear special effects
+      const aGear=isPlayer?pc.gear:ec.gear;
+      if(aGear&&aGear[1]){
+        const g=aGear[1];
+        if(g&&g.special==='poison'&&rngChance(10)){
+          msgs.push({text:dName+' was poisoned!',status:{target:isPlayer?1:2,type:'poison'}});
+        }
+        if(g&&g.special==='stun'&&rngChance(10)){
+          msgs.push({text:dName+' was stunned!',status:{target:isPlayer?1:2,type:'stun'}});
+        }
+      }
+
+      // Drain
+      if(mv.fx==='drain'){
+        const healAmt=Math.floor(dmg/2);
+        msgs.push({text:aName+' drained '+healAmt+'!',heal:healAmt,target:isPlayer?2:1});
+      }
+    }
+
+    // Special effects
+    if(mv.fx==='shield'){
+      msgs.push({text:aName+' raised a shield!',status:{target:isPlayer?2:1,type:'shield'}});
+    }
+    if(mv.fx==='poison'){
+      msgs.push({text:dName+' was poisoned!',status:{target:isPlayer?1:2,type:'poison'}});
+      b.wasPoisoned=true;
+    }
+    if(mv.fx==='stun'){
+      msgs.push({text:dName+' was stunned!',status:{target:isPlayer?1:2,type:'stun'}});
+      b.wasStunned=true;
+    }
+    if(mv.fx==='heal'){
+      const healAmt=Math.floor(aMaxHP*0.4);
+      msgs.push({text:aName+' recovered '+healAmt+'!',heal:healAmt,target:isPlayer?2:1});
+    }
+    if(mv.fx==='atkup'){
+      msgs.push({text:aName+' powered up!',status:{target:isPlayer?2:1,type:'atkup'}});
+    }
+
+    // SP cost
+    if(isPlayer)pc.sp=Math.max(0,pc.sp-mv.sp);
+  }
+
+  // Execute turns
+  if(playerFirst){
+    if(pStunned){
+      msgs.push({text:pc.name+' is stunned!'});
+      pc.stun=Math.max(0,pc.stun-1);
+    }else{
+      doMove(pc,ec,playerMoveId,true);
+    }
+    msgs.push({text:'__CHECK_KO__'});
+    if(eStunned){
+      msgs.push({text:ec.name+' is stunned!'});
+      ec.stun=Math.max(0,ec.stun-1);
+    }else{
+      doMove(ec,pc,eMoveId,false);
+    }
+  }else{
+    if(eStunned){
+      msgs.push({text:ec.name+' is stunned!'});
+      ec.stun=Math.max(0,ec.stun-1);
+    }else{
+      doMove(ec,pc,eMoveId,false);
+    }
+    msgs.push({text:'__CHECK_KO__'});
+    if(pStunned){
+      msgs.push({text:pc.name+' is stunned!'});
+      pc.stun=Math.max(0,pc.stun-1);
+    }else{
+      doMove(pc,ec,playerMoveId,true);
+    }
+  }
+
+  // End-of-turn effects
+  msgs.push({text:'__CHECK_KO__'});
+
+  // Poison damage
+  if(pc.poison>0){
+    const pdmg=Math.max(1,Math.floor(pc.maxHp*0.06*pc.poison));
+    msgs.push({text:pc.name+' hurt by poison! -'+pdmg,dmg:pdmg,target:2});
+    msgs.push({text:'__CHECK_KO__'});
+  }
+  if(ec.poison>0){
+    const pdmg=Math.max(1,Math.floor(ec.maxHp*0.06*ec.poison));
+    msgs.push({text:ec.name+' hurt by poison! -'+pdmg,dmg:pdmg,target:1});
+    msgs.push({text:'__CHECK_KO__'});
+  }
+
+  // Regen skill
+  if(pc.skills.includes(6)){
+    const rh=Math.max(1,Math.floor(pc.maxHp*0.05));
+    msgs.push({text:pc.name+' regenerated '+rh+'!',heal:rh,target:2});
+  }
+
+  // Species abilities
+  const pSp=SPECIES[pc.species];
+  if(pSp.ability==='BLAZE'&&pc.hp<pc.maxHp/3){
+    pc.atkBuff=1; // will be used next turn
+  }
+  if(pSp.ability==='TORRENT'&&pc.hp<pc.maxHp/3){
+    // def boost handled in damage calc
+  }
+  if(pSp.ability==='OVERGROW'){
+    const oh=Math.max(1,Math.floor(pc.maxHp*0.05));
+    msgs.push({text:pc.name+' regrew '+oh+'!',heal:oh,target:2});
+  }
+  if(pSp.ability==='STATIC'&&!eStunned&&rngChance(20)){
+    msgs.push({text:'Static shocked '+ec.name+'!',status:{target:1,type:'stun'}});
+  }
+
+  // Decrement buffs
+  if(pc.atkBuff>0)pc.atkBuff--;
+  if(ec.atkBuff>0)ec.atkBuff--;
+
+  // End - go to MENU
+  msgs.push({text:'__TURN_END__'});
+
+  G.battle._turnMsgs=msgs;
+  G.battle._turnIdx=0;
+  processTurnMsg();
+}
+
+function processTurnMsg(){
+  const b=G.battle;
+  if(!b._turnMsgs||b._turnIdx>=b._turnMsgs.length){
+    b.subState=BS.MENU;b.sel=0;
+    return;
+  }
+
+  const msg=b._turnMsgs[b._turnIdx];
+  b._turnIdx++;
+
+  if(msg.text==='__CHECK_KO__'){
+    if(G.creature.hp<=0){
+      b.msg=G.creature.name+' FAINTED!';
+      b.msgTimer=50;b.subState=BS.MSG;b._afterMsg=BS.LOSE;
+      return;
+    }
+    if(b.enemy.hp<=0){
+      b.msg=b.enemy.name+' DEFEATED!';
+      b.msgTimer=50;b.subState=BS.MSG;b._afterMsg=BS.WIN;
+      return;
+    }
+    processTurnMsg();return;
+  }
+
+  if(msg.text==='__TURN_END__'){
+    b.subState=BS.MENU;b.sel=0;
+    return;
+  }
+
+  // Apply damage
+  if(msg.dmg){
+    if(msg.target===1){b.enemy.hp=Math.max(0,b.enemy.hp-msg.dmg);b.shakeTimer=8;b.shakeTarget=1}
+    if(msg.target===2){G.creature.hp=Math.max(0,G.creature.hp-msg.dmg);b.shakeTimer=8;b.shakeTarget=2}
+  }
+
+  // Apply heal
+  if(msg.heal){
+    if(msg.target===1)b.enemy.hp=Math.min(b.enemy.maxHp,b.enemy.hp+msg.heal);
+    if(msg.target===2)G.creature.hp=Math.min(G.creature.maxHp,G.creature.hp+msg.heal);
+  }
+
+  // Apply status
+  if(msg.status){
+    const t=msg.status.target===1?b.enemy:G.creature;
+    if(msg.status.type==='poison')t.poison=Math.min(3,t.poison+1);
+    if(msg.status.type==='stun')t.stun=Math.min(2,t.stun+1);
+    if(msg.status.type==='shield')t.shield=2;
+    if(msg.status.type==='atkup')t.atkBuff=3;
+  }
+
+  b.msg=msg.text;
+  b.msgTimer=35;
+  b.subState=BS.MSG;
+  b._afterMsg='__CONTINUE_TURN__';
+}
+
+function battleAdvance(){
+  const b=G.battle;
+  if(b._afterMsg==='__CONTINUE_TURN__'){
+    processTurnMsg();
+    return;
+  }
+  b.subState=b._afterMsg;
+}
+
+// ── Post-Battle Handlers ──────────────────────────────────
+function handleBattleWin(){
+  const b=G.battle;
+  const ec=b.enemy;
+  G.battlesWon++;
+
+  // Calculate rewards
+  const baseXP=ec.level*10;
+  const xpMult=charXPMult(G.player);
+  b.xpReward=Math.floor(baseXP*xpMult/100);
+  b.goldReward=Math.floor(ec.level*5*charGoldMult(G.player)/100);
+  G.player.gold+=b.goldReward;
+
+  // Baseline XP to both
+  const charLvUp=charAwardXP(G.player,Math.floor(b.xpReward*0.3));
+  const creaLvUp=creatureAwardXP(G.creature,Math.floor(b.xpReward*0.3));
+
+  // Boss defeated
+  if(b.isBoss){
+    G.zone.bossDefeated=true;
+  }
+
+  // Go to post-battle choice
+  G.post.enemy={...ec};
+  G.post.choice=0;
+  G.state=ST.POST_BATTLE;
+
+  // Store pending level ups
+  G._charLvUp=charLvUp;
+  G._creaLvUp=creaLvUp;
+}
+
+function handleBattleLose(){
+  // Death: reset to zone start, heal
+  healCreature(G.creature);
+  G.px=G.zone.entryX;
+  G.py=G.zone.entryY;
+  G.inGym=false;
+  G.state=ST.OVERWORLD;
+  showMsg('THE EMPEROR PROTECTS...','RETURNING TO ZONE START');
+  saveGame();
+}
+
+// ── Post-Battle Choice Screen ─────────────────────────────
+function renderPostBattle(){
+  fillRect(bctx,0,0,W,H,[16,16,24]);
+
+  const b=G.battle;
+  const ec=G.post.enemy;
+
+  drawTextShadow(bctx,8,4,'VICTORY!',PAL.ACCENT,0,2);
+  drawText(bctx,8,16,'EARNED $'+b.goldReward+' +'+b.xpReward+'XP',PAL.UI,1);
+
+  // Enemy info
+  drawText(bctx,8,30,ec.name+' LV'+ec.level,PAL.UI,2);
+
+  // Choices
+  const opts=[
+    {name:'EAT',desc:'CHAR XP + HEAL'},
+    {name:'FEED',desc:'CREA XP + HEAL'},
+    {name:'CATCH',desc:'ADD TO ROSTER'},
+  ];
+
+  for(let i=0;i<3;i++){
+    const y=50+i*28;
+    const sel=G.post.choice===i;
+
+    if(sel)fillRect(bctx,4,y-2,152,24,[32,32,48]);
+
+    drawText(bctx,20,y,opts[i].name,PAL.UI,sel?3:1);
+    drawText(bctx,20,y+10,opts[i].desc,PAL.UI,2);
+
+    if(sel)drawText(bctx,8,y,'>',PAL.ACCENT,0);
+  }
+
+  // Catch chance preview
+  if(G.post.choice===2){
+    const catchRate=Math.min(90,30+charCatchBonus(G.player)+
+      (b.wasPoisoned?10:0)+(b.wasStunned?10:0));
+    drawText(bctx,8,136,'CATCH CHANCE: '+catchRate+'%',PAL.UI,2);
+  }
+}
+
+function updatePostBattle(){
+  if(G.msgActive)return;
+
+  if(justPressed.up&&G.post.choice>0)G.post.choice--;
+  if(justPressed.down&&G.post.choice<2)G.post.choice++;
+
+  if(justPressed.a){
+    const b=G.battle;
+    const ec=G.post.enemy;
+    const bonusXP=b.xpReward;
+
+    if(G.post.choice===PC.EAT){
+      // Character XP + heal
+      const charXP=Math.floor(bonusXP*charXPMult(G.player)/100);
+      G.creature.hp=Math.min(G.creature.maxHp,G.creature.hp+Math.floor(G.creature.maxHp*0.15));
+      const lvUp=charAwardXP(G.player,charXP);
+      showMsg('DEVOURED THE CREATURE!','CHAR +'+charXP+' XP');
+
+      if(lvUp||G._charLvUp){
+        G._charLvUp=false;
+        G._pendingSkill='char';
+      }
+      finishPostBattle();
+
+    }else if(G.post.choice===PC.FEED){
+      // Creature XP + heal
+      const creaXP=Math.floor(bonusXP*charXPMult(G.player)/100);
+      G.creature.hp=Math.min(G.creature.maxHp,G.creature.hp+Math.floor(G.creature.maxHp*0.15));
+      const lvUp=creatureAwardXP(G.creature,creaXP);
+      showMsg('FED '+G.creature.name+'!','CREA +'+creaXP+' XP');
+
+      if(lvUp||G._creaLvUp){
+        G._creaLvUp=false;
+        G._pendingSkill='crea';
+      }
+      finishPostBattle();
+
+    }else{
+      // Catch attempt
+      const catchRate=Math.min(90,30+charCatchBonus(G.player)+
+        (b.wasPoisoned?10:0)+(b.wasStunned?10:0)+b.catchBonus);
+
+      if(rngChance(catchRate)){
+        // Success!
+        const caught=createCreature(ec.species,ec.level);
+        G.roster.push(caught);
+        G.creaturesCaught++;
+        showMsg('CAPTURED!',ec.name+' JOINS YOUR HUNT!');
+      }else{
+        showMsg('IT ESCAPED!','THE PREY FLED.');
+      }
+      finishPostBattle();
+    }
+  }
+}
+
+function finishPostBattle(){
+  G._afterPostBattle=function(){
+    // Handle pending level-ups
+    if(G._pendingSkill==='char'){
+      G._pendingSkill=null;
+      G.skill.options=genCharSkillOptions();
+      G.skill.sel=0;
+      G.skill.isCreature=false;
+      G.state=ST.SKILL_CHAR;
+      return;
+    }
+    if(G._pendingSkill==='crea'){
+      G._pendingSkill=null;
+      G.skill.options=genCreatureSkillOptions(G.creature);
+      G.skill.sel=0;
+      G.skill.isCreature=true;
+      G.state=ST.SKILL_CREA;
+      return;
+    }
+
+    // Check char level up from baseline XP
+    if(G._charLvUp){
+      G._charLvUp=false;
+      G.skill.options=genCharSkillOptions();
+      G.skill.sel=0;
+      G.skill.isCreature=false;
+      G.state=ST.SKILL_CHAR;
+      return;
+    }
+    if(G._creaLvUp){
+      G._creaLvUp=false;
+      G.skill.options=genCreatureSkillOptions(G.creature);
+      G.skill.sel=0;
+      G.skill.isCreature=true;
+      G.state=ST.SKILL_CREA;
+      return;
+    }
+
+    // Boss defeated - advance zone
+    if(G.battle.isBoss&&G.zone.bossDefeated){
+      showMsg('ZONE CLEARED!','ADVANCING...');
+      const nextZone=G.zone.num+1;
+      const savedRng=rngState;
+      rngSeed(nextZone*1337+42);
+      G.zone=generateZone(nextZone);
+      rngState=savedRng;
+      G.px=G.zone.entryX;
+      G.py=G.zone.entryY;
+      G.inGym=false;
+      healCreature(G.creature);
+
+      // Boss upgrade selection
+      G.skill.options=genCharSkillOptions(); // Boss grants char upgrade
+      G.skill.sel=0;
+      G.skill.isCreature=false;
+      G._afterSkill=function(){
+        G.state=ST.SHOP;
+        G.shop.items=genShopInventory(G.zone.num);
+        G.shop.sel=0;G.shop.scroll=0;
+      };
+      G.state=ST.SKILL_CHAR;
+      return;
+    }
+
+    healCreature(G.creature);
+    G.state=ST.OVERWORLD;
+    saveGame();
+  };
+}
+
+// ── Skill Selection Screen ────────────────────────────────
+function renderSkillTree(){
+  fillRect(bctx,0,0,W,H,[12,12,20]);
+
+  const isCrea=G.skill.isCreature;
+  const title=isCrea?(G.creature.name+' LEVEL UP!'):'MARINE LEVEL UP!';
+  const lvStr='LV '+String(isCrea?G.creature.level:G.player.level);
+
+  drawTextShadow(bctx,8,4,title,PAL.ACCENT,0,2);
+  drawText(bctx,8,16,lvStr,PAL.UI,1);
+  drawText(bctx,8,28,'CHOOSE AN UPGRADE:',PAL.UI,2);
+
+  for(let i=0;i<G.skill.options.length;i++){
+    const opt=G.skill.options[i];
+    const y=44+i*30;
+    const sel=G.skill.sel===i;
+
+    if(sel)fillRect(bctx,4,y-2,152,26,[28,28,44]);
+
+    drawText(bctx,20,y,opt.name,PAL.UI,sel?3:1);
+    drawText(bctx,20,y+10,opt.desc,PAL.UI,2);
+    if(opt.isMove)drawText(bctx,120,y,'(MOVE)',PAL.E_ELEC,0);
+
+    if(sel)drawText(bctx,8,y,'>',PAL.ACCENT,0);
+  }
+
+  drawText(bctx,32,136,'A: SELECT',PAL.UI,2);
+}
+
+function updateSkillTree(){
+  if(G.msgActive)return;
+
+  if(justPressed.up&&G.skill.sel>0)G.skill.sel--;
+  if(justPressed.down&&G.skill.sel<G.skill.options.length-1)G.skill.sel++;
+
+  if(justPressed.a){
+    const opt=G.skill.options[G.skill.sel];
+
+    if(G.skill.isCreature){
+      applyCreatureSkill(G.creature,opt);
+    }else{
+      applyCharSkill(G.player,opt);
+    }
+
+    showMsg('UPGRADE ACQUIRED!',opt.name);
+
+    // Chain to callback or back to overworld
+    if(G._afterSkill){
+      const cb=G._afterSkill;
+      G._afterSkill=null;
+      cb();
+    }else if(G._afterPostBattle){
+      const cb=G._afterPostBattle;
+      G._afterPostBattle=null;
+      cb();
+    }else{
+      G.state=ST.OVERWORLD;
+      saveGame();
+    }
+  }
+}
+
+// ── Shop Screen ───────────────────────────────────────────
+function renderShop(){
+  fillRect(bctx,0,0,W,H,[16,12,8]);
+
+  drawTextShadow(bctx,8,4,'IMPERIAL ARMORY',PAL.ACCENT,0,2);
+  drawText(bctx,8,16,'GOLD: $'+G.player.gold,PAL.ACCENT,0);
+
+  const items=G.shop.items;
+  const visible=5;
+  const startY=30;
+
+  for(let i=0;i<visible&&i+G.shop.scroll<items.length;i++){
+    const idx=i+G.shop.scroll;
+    const item=items[idx];
+    const y=startY+i*20;
+    const sel=G.shop.sel===idx;
+    const d=item.data;
+
+    if(sel)fillRect(bctx,4,y-2,152,18,[32,28,20]);
+
+    const prefix=item.type==='gear'?'[G]':'[I]';
+    drawText(bctx,20,y,prefix+' '+d.name,PAL.UI,sel?3:1);
+    drawText(bctx,20,y+8,'$'+d.cost+' '+d.desc,PAL.UI,2);
+
+    if(sel)drawText(bctx,8,y,'>',PAL.ACCENT,0);
+  }
+
+  // Scroll indicator
+  if(G.shop.scroll>0)drawText(bctx,76,26,'^',PAL.UI,2);
+  if(G.shop.scroll+visible<items.length)drawText(bctx,76,startY+visible*20,'v',PAL.UI,2);
+
+  // Footer
+  drawBox(bctx,0,126,W,18);
+  drawText(bctx,8,130,'A:BUY  B:LEAVE',PAL.UI,3);
+
+  // Creature gear status
+  if(G.creature){
+    const g0=G.creature.gear[0];
+    const g1=G.creature.gear[1];
+    drawText(bctx,8,140,'CORE:'+(g0?g0.name:'NONE'),PAL.UI,2);
+  }
+
+  if(G.shop.msg){
+    drawBox(bctx,10,55,140,20);
+    drawText(bctx,16,60,G.shop.msg,PAL.UI,3);
+  }
+}
+
+function updateShop(){
+  if(G.msgActive)return;
+
+  const items=G.shop.items;
+  if(items.length===0){
+    G.state=ST.OVERWORLD;return;
+  }
+
+  G.shop.msg='';
+
+  if(justPressed.up){
+    if(G.shop.sel>0)G.shop.sel--;
+    if(G.shop.sel<G.shop.scroll)G.shop.scroll=G.shop.sel;
+  }
+  if(justPressed.down){
+    if(G.shop.sel<items.length-1)G.shop.sel++;
+    if(G.shop.sel>=G.shop.scroll+5)G.shop.scroll=G.shop.sel-4;
+  }
+
+  if(justPressed.a){
+    const item=items[G.shop.sel];
+    const d=item.data;
+    if(G.player.gold>=d.cost){
+      G.player.gold-=d.cost;
+
+      if(item.type==='gear'){
+        // Equip to creature
+        const slot=d.slot;
+        G.creature.gear[slot]=d;
+        // Apply gear bonuses
+        if(d.bonus.atk)G.creature.atk+=d.bonus.atk;
+        if(d.bonus.def)G.creature.def+=d.bonus.def;
+        if(d.bonus.spd)G.creature.spd+=d.bonus.spd;
+        if(d.bonus.hp){G.creature.maxHp+=d.bonus.hp;G.creature.hp+=d.bonus.hp}
+        G.shop.msg='EQUIPPED '+d.name+'!';
+      }else{
+        // Use consumable
+        if(d.fx==='heal'){
+          G.creature.hp=Math.min(G.creature.maxHp,G.creature.hp+d.val);
+          G.shop.msg='HEALED '+d.val+' HP!';
+        }else if(d.fx==='sp'){
+          G.creature.sp=Math.min(G.creature.maxSp,G.creature.sp+d.val);
+          G.shop.msg='RESTORED '+d.val+' SP!';
+        }else if(d.fx==='cure'){
+          G.creature.poison=0;
+          G.shop.msg='CURED POISON!';
+        }else if(d.fx==='ball'){
+          G.battle.catchBonus+=d.val;
+          G.shop.msg='CATCH BONUS +'+d.val+'%!';
+        }
+      }
+    }else{
+      G.shop.msg='NOT ENOUGH GOLD!';
+    }
+  }
+
+  if(justPressed.b){
+    G.state=ST.OVERWORLD;
+    saveGame();
+  }
+}
+
+// ── Pause Menu ────────────────────────────────────────────
+function renderMenu(){
+  fillRect(bctx,0,0,W,H,[12,12,20]);
+
+  drawBox(bctx,4,4,152,136);
+  drawTextShadow(bctx,32,8,'IMPERIAL HUNT',PAL.ACCENT,0,2);
+
+  // Marine stats
+  drawText(bctx,8,22,'MARINE LV '+G.player.level,PAL.UI,3);
+  drawText(bctx,8,32,'CHA:'+G.player.cha+' WIS:'+G.player.wis,PAL.UI,1);
+  drawText(bctx,8,40,'LCK:'+G.player.lck+' CON:'+G.player.con,PAL.UI,1);
+  drawText(bctx,8,48,'GOLD: $'+G.player.gold,PAL.ACCENT,0);
+  drawText(bctx,8,56,'XP: '+G.player.xp+'/'+G.player.xpNext,PAL.UI,2);
+
+  // Creature stats
+  if(G.creature){
+    drawText(bctx,8,70,G.creature.name+' LV'+G.creature.level,PAL.UI,3);
+    drawText(bctx,8,78,'HP:'+G.creature.hp+'/'+G.creature.maxHp,PAL.UI,1);
+    drawText(bctx,80,78,'SP:'+G.creature.sp+'/'+G.creature.maxSp,PAL.UI,1);
+    drawText(bctx,8,86,'ATK:'+G.creature.atk+' DEF:'+G.creature.def+' SPD:'+G.creature.spd,PAL.UI,1);
+    drawText(bctx,8,94,'TYPE: '+ELEM_NAMES[G.creature.type],ELEM_PAL[G.creature.type],0);
+
+    // Moves
+    drawText(bctx,8,104,'MOVES:',PAL.UI,2);
+    for(let i=0;i<G.creature.moves.length;i++){
+      drawText(bctx,48+i*26,104,MOVES[G.creature.moves[i]].name.substring(0,3),PAL.UI,1);
+    }
+  }
+
+  // Zone info
+  drawText(bctx,8,114,'ZONE '+String(G.zone.num+1)+': '+ZONE_THEMES[G.zone.theme],PAL.UI,2);
+
+  // Menu options
+  const opts=['SAVE','ROSTER','BACK'];
+  for(let i=0;i<opts.length;i++){
+    const y=124+i*10;
+    drawText(bctx,24,y,opts[i],PAL.UI,G.menuSel===i?3:1);
+    if(G.menuSel===i)drawText(bctx,12,y,'>',PAL.ACCENT,0);
+  }
+}
+
+function updateMenu(){
+  if(G.msgActive)return;
+
+  if(justPressed.up&&G.menuSel>0)G.menuSel--;
+  if(justPressed.down&&G.menuSel<2)G.menuSel++;
+
+  if(justPressed.a){
+    if(G.menuSel===0){
+      saveGame();
+      showMsg('GAME SAVED!','');
+    }else if(G.menuSel===1){
+      // Show roster
+      let rStr='ROSTER: '+G.roster.length+' CAUGHT';
+      if(G.roster.length>0){
+        rStr=G.roster.map(c=>c.name).join(', ');
+        if(rStr.length>18)rStr=rStr.substring(0,18)+'..';
+      }
+      showMsg(rStr,'TOTAL: '+G.creaturesCaught);
+    }else{
+      G.state=ST.OVERWORLD;
+      G.menuSel=0;
+    }
+  }
+
+  if(justPressed.b||justPressed.start){
+    G.state=ST.OVERWORLD;
+    G.menuSel=0;
+  }
+}
+
+// ── Message System ────────────────────────────────────────
+function showMsg(line1,line2){
+  G.msgText=line1||'';
+  G.msgLine2=line2||'';
+  G.msgActive=true;
+}
+
+function renderMsg(){
+  if(!G.msgActive)return;
+  drawBox(bctx,4,H-40,W-8,36);
+  drawText(bctx,10,H-36,G.msgText.substring(0,18),PAL.UI,3);
+  if(G.msgLine2)drawText(bctx,10,H-26,G.msgLine2.substring(0,18),PAL.UI,1);
+  if(G.frame%40<25)drawText(bctx,W-20,H-12,'...',PAL.UI,2);
+}
+
+function updateMsg(){
+  if(!G.msgActive)return;
+  if(justPressed.a||justPressed.b||justPressed.start){
+    G.msgActive=false;
+    // Trigger post-battle callback
+    if(G.state===ST.POST_BATTLE&&G._afterPostBattle){
+      const cb=G._afterPostBattle;
+      G._afterPostBattle=null;
+      cb();
+    }
+  }
+}
+
+// ── Screen Transitions ────────────────────────────────────
+function renderTransition(){
+  if(G.transition<=0)return;
+  const alpha=G.transition/15;
+  bctx.fillStyle=`rgba(0,0,0,${alpha})`;
+  bctx.fillRect(0,0,W,H);
+}
+
+// ═══════════════════════════════════════════════════════════
+// MAIN GAME LOOP
+// ═══════════════════════════════════════════════════════════
+
+function update(){
+  updateInput();
+  G.frame++;
+
+  // Handle transition
+  if(G.transition>0){
+    G.transition--;
+    if(G.transition===0&&G.transCallback){
+      G.transCallback();G.transCallback=null;
+    }
+    return;
+  }
+
+  // Message overlay
+  if(G.msgActive){
+    updateMsg();
+    return;
+  }
+
+  switch(G.state){
+    case ST.TITLE:updateTitle();break;
+    case ST.STARTER:updateStarter();break;
+    case ST.OVERWORLD:updateOverworld();break;
+    case ST.BATTLE:updateBattle();break;
+    case ST.POST_BATTLE:updatePostBattle();break;
+    case ST.SHOP:updateShop();break;
+    case ST.SKILL_CHAR:case ST.SKILL_CREA:updateSkillTree();break;
+    case ST.MENU:updateMenu();break;
+  }
+}
+
+function render(){
+  // Clear buffer
+  bctx.fillStyle='#000';
+  bctx.fillRect(0,0,W,H);
+
+  switch(G.state){
+    case ST.TITLE:renderTitle();break;
+    case ST.STARTER:renderStarter();break;
+    case ST.OVERWORLD:renderOverworld();break;
+    case ST.BATTLE:renderBattle();break;
+    case ST.POST_BATTLE:renderPostBattle();break;
+    case ST.SHOP:renderShop();break;
+    case ST.SKILL_CHAR:case ST.SKILL_CREA:renderSkillTree();break;
+    case ST.MENU:renderMenu();break;
+  }
+
+  // Message overlay
+  renderMsg();
+
+  // Transition overlay
+  renderTransition();
+
+  // Copy buffer to display
+  ctx.drawImage(buf,0,0);
+}
+
+// Game loop at ~60fps (GBC-like timing)
+let lastTime=0;
+const FRAME_TIME=1000/60;
+
+function gameLoop(timestamp){
+  if(timestamp-lastTime>=FRAME_TIME){
+    lastTime=timestamp;
+    update();
+    render();
+  }
+  requestAnimationFrame(gameLoop);
+}
+
+// Start!
+requestAnimationFrame(gameLoop);
+
+</script>
+</body>
+</html>

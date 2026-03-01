@@ -5,221 +5,74 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
-<title>Creature Collector – Mobile Test</title>
+<title>IMPERIAL HUNT - Test Runner</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html, body {
     height: 100%; width: 100%;
-    background: #0d1117; color: #e6edf3;
-    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    background: #0a0a0a; color: #e6edf3;
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', monospace;
     -webkit-user-select: none; user-select: none;
   }
-
-  /* ---- Lobby: ROM loader screen ---- */
-  #lobby {
+  .lobby {
     display: flex; flex-direction: column;
     align-items: center; justify-content: center;
-    height: 100%; padding: 24px; text-align: center;
+    height: 100%; padding: 24px; text-align: center; gap: 16px;
   }
-  #lobby h1 { font-size: 22px; margin-bottom: 4px; }
-  #lobby .sub { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
-  .status { margin-bottom: 12px; font-size: 14px; }
-  .status.ok  { color: #3fb950; }
-  .status.err { color: #f85149; }
-  .status.load { color: #d29922; }
-
+  h1 { font-size: 24px; color: #c8a030; margin-bottom: 4px; }
+  .sub { color: #8b949e; font-size: 13px; }
   .btn {
-    display: inline-block; padding: 14px 32px;
+    display: inline-block; padding: 16px 40px;
     background: #238636; color: #fff; border: none; border-radius: 8px;
-    font-size: 16px; font-weight: 600; cursor: pointer; margin: 6px;
-    text-decoration: none;
+    font-size: 18px; font-weight: 700; cursor: pointer;
+    text-decoration: none; transition: all 0.15s;
   }
-  .btn:active { opacity: 0.8; }
-  .btn.secondary { background: #21262d; border: 1px solid #30363d; }
-  .btn:disabled { opacity: 0.4; pointer-events: none; }
-
-  #file-input { display: none; }
-
-  .drop-zone {
-    border: 2px dashed #30363d; border-radius: 12px;
-    padding: 28px 20px; margin: 12px 0; width: 100%; max-width: 340px;
-    color: #8b949e; font-size: 14px; cursor: pointer;
-    transition: border-color 0.2s;
+  .btn:hover { background: #2ea043; transform: scale(1.05); }
+  .btn:active { transform: scale(0.95); }
+  .btn.secondary {
+    background: #21262d; border: 2px solid #30363d;
+    font-size: 14px; padding: 10px 24px;
   }
-  .drop-zone:active, .drop-zone.hover { border-color: #58a6ff; }
-
-  .instructions {
-    margin-top: 20px; padding: 16px; background: #161b22;
+  .controls {
+    margin-top: 16px; padding: 16px; background: #161b22;
     border: 1px solid #30363d; border-radius: 8px;
-    max-width: 340px; text-align: left; font-size: 12px;
-    color: #8b949e; line-height: 1.6;
+    max-width: 400px; text-align: left; font-size: 13px;
+    color: #8b949e; line-height: 1.8;
   }
-  .instructions code {
+  .controls strong { color: #e6edf3; }
+  .controls code {
     background: #0d1117; padding: 2px 6px; border-radius: 3px;
-    color: #e6edf3; font-size: 12px;
+    color: #c8a030; font-size: 12px;
   }
-  .instructions strong { color: #e6edf3; }
-
-  /* ---- Emulator container ---- */
-  #emu-wrap {
-    display: none; width: 100%; height: 100%;
-  }
-  #game {
-    width: 100%; height: 100%;
-  }
+  .version { color: #484848; font-size: 11px; margin-top: 8px; }
 </style>
 </head>
 <body>
 
-<!-- ========== LOBBY ========== -->
-<div id="lobby">
-  <h1>Creature Collector</h1>
-  <div class="sub">GBC Test Runner</div>
+<div class="lobby">
+  <h1>IMPERIAL HUNT</h1>
+  <div class="sub">A Space Marine's Creature Quest</div>
+  <div class="sub">GBC-Style HTML5 RPG</div>
 
-  <div id="status" class="status">Checking for ROM...</div>
+  <a class="btn" href="../imperial-hunt.html">PLAY GAME</a>
 
-  <button class="btn" id="btn-play" disabled>Play</button>
-
-  <div class="drop-zone" id="drop-zone">
-    Tap to upload a <b>.gbc</b> ROM from your device
+  <div class="controls">
+    <strong>Controls:</strong><br>
+    <code>Arrow Keys</code> / <code>WASD</code> - Move<br>
+    <code>Z</code> / <code>Space</code> - A (Confirm)<br>
+    <code>X</code> - B (Back)<br>
+    <code>Enter</code> / <code>Esc</code> - Start (Menu)<br>
+    <code>Shift</code> - Select<br><br>
+    <strong>Touch controls</strong> are displayed below the game canvas on mobile.<br><br>
+    <strong>Game saves automatically</strong> to browser localStorage.
   </div>
-  <input type="file" id="file-input" accept=".gbc,.gb">
 
-  <div class="instructions">
-    <strong>Setup (one time):</strong><br>
-    1. Install GBDK-2020<br>
-    2. <code>cd game && make</code><br>
-    3. <code>./serve.sh</code><br>
-    4. Open the printed URL on your phone<br><br>
-    <strong>Each iteration:</strong><br>
-    1. Edit source files<br>
-    2. <code>make</code><br>
-    3. Pull down to refresh this page
+  <a class="btn secondary" href="../imperial-hunt.html" target="_blank">Open in New Tab</a>
+
+  <div class="version">
+    HTML5 Canvas Implementation | 160x144 GBC viewport | 3x scale
   </div>
 </div>
 
-<!-- ========== EMULATOR ========== -->
-<div id="emu-wrap">
-  <div id="game"></div>
-</div>
-
-<script>
-(function() {
-  'use strict';
-
-  const ROM_NAME = 'CreatureCollector.gbc';
-  const ROM_SERVER_PATH = '../' + ROM_NAME;
-
-  const lobby    = document.getElementById('lobby');
-  const emuWrap  = document.getElementById('emu-wrap');
-  const statusEl = document.getElementById('status');
-  const btnPlay  = document.getElementById('btn-play');
-  const dropZone = document.getElementById('drop-zone');
-  const fileInput= document.getElementById('file-input');
-
-  let romBlobUrl = null;
-  let serverRomAvailable = false;
-
-  // ---- Check if compiled ROM is on the dev server ----------
-  async function checkServerRom() {
-    try {
-      const r = await fetch(ROM_SERVER_PATH, { method: 'HEAD', cache: 'no-store' });
-      if (r.ok) {
-        const kb = ((+r.headers.get('content-length') || 0) / 1024).toFixed(0);
-        statusEl.textContent = 'ROM found on server (' + kb + ' KB)';
-        statusEl.className = 'status ok';
-        serverRomAvailable = true;
-        btnPlay.disabled = false;
-        return;
-      }
-    } catch(e) {}
-    statusEl.textContent = 'No ROM on server \u2014 upload below, or run: make && ./serve.sh';
-    statusEl.className = 'status err';
-  }
-
-  // ---- Launch EmulatorJS -----------------------------------
-  function launchEmulator(gameUrl) {
-    lobby.style.display = 'none';
-    emuWrap.style.display = 'block';
-
-    // EmulatorJS configuration
-    // https://emulatorjs.org/docs/Options
-    window.EJS_player     = '#game';
-    window.EJS_core       = 'gambatte';        // Accurate GBC core
-    window.EJS_gameUrl    = gameUrl;
-    window.EJS_gameName   = 'Creature Collector';
-    window.EJS_color      = '#0d1117';
-    window.EJS_startOnLoaded = true;           // Skip "press to start"
-    window.EJS_DEBUG_XX   = false;
-    window.EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
-    window.EJS_oldCores   = true;              // Wider browser compat
-
-    // Inject the EmulatorJS loader script
-    var s = document.createElement('script');
-    s.src = 'https://cdn.emulatorjs.org/stable/data/loader.js';
-    s.onerror = function() {
-      emuWrap.style.display = 'none';
-      lobby.style.display = 'flex';
-      statusEl.textContent = 'Failed to load emulator from CDN. Check your internet connection.';
-      statusEl.className = 'status err';
-    };
-    document.body.appendChild(s);
-  }
-
-  // ---- Play from server ------------------------------------
-  btnPlay.addEventListener('click', function() {
-    if (serverRomAvailable) {
-      // Use absolute path so EmulatorJS can fetch it
-      launchEmulator(new URL(ROM_SERVER_PATH, location.href).href);
-    } else if (romBlobUrl) {
-      launchEmulator(romBlobUrl);
-    }
-  });
-
-  // ---- File upload -----------------------------------------
-  dropZone.addEventListener('click', function() { fileInput.click(); });
-
-  fileInput.addEventListener('change', function(e) {
-    var file = e.target.files[0];
-    if (!file) return;
-    handleFile(file);
-  });
-
-  // Drag and drop (works on desktop)
-  dropZone.addEventListener('dragover', function(e) {
-    e.preventDefault(); dropZone.classList.add('hover');
-  });
-  dropZone.addEventListener('dragleave', function() {
-    dropZone.classList.remove('hover');
-  });
-  dropZone.addEventListener('drop', function(e) {
-    e.preventDefault(); dropZone.classList.remove('hover');
-    if (e.dataTransfer.files[0]) handleFile(e.dataTransfer.files[0]);
-  });
-
-  function handleFile(file) {
-    statusEl.textContent = 'Loading ' + file.name + '...';
-    statusEl.className = 'status load';
-
-    var reader = new FileReader();
-    reader.onload = function() {
-      var blob = new Blob([reader.result], { type: 'application/octet-stream' });
-      romBlobUrl = URL.createObjectURL(blob);
-
-      statusEl.textContent = file.name + ' (' + (file.size / 1024).toFixed(0) + ' KB) ready';
-      statusEl.className = 'status ok';
-      btnPlay.disabled = false;
-
-      // Auto-launch
-      launchEmulator(romBlobUrl);
-    };
-    reader.readAsArrayBuffer(file);
-  }
-
-  // ---- Boot ------------------------------------------------
-  checkServerRom();
-
-})();
-</script>
 </body>
 </html>
