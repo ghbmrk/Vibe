@@ -1,0 +1,94 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Creature Quest - GBC</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            background: #1a1a2e;
+            color: #e0e0e0;
+            font-family: 'Courier New', monospace;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+        }
+        h1 {
+            font-size: 2rem;
+            margin-bottom: 0.5rem;
+            color: #4ecca3;
+            text-shadow: 0 0 10px rgba(78, 204, 163, 0.5);
+        }
+        .subtitle {
+            font-size: 0.9rem;
+            color: #888;
+            margin-bottom: 1.5rem;
+        }
+        #emulator-container {
+            width: 480px;
+            height: 432px;
+            border: 3px solid #4ecca3;
+            border-radius: 8px;
+            overflow: hidden;
+            box-shadow: 0 0 30px rgba(78, 204, 163, 0.2);
+        }
+        .controls {
+            margin-top: 1.5rem;
+            text-align: center;
+            color: #888;
+            font-size: 0.85rem;
+            line-height: 1.8;
+        }
+        .controls kbd {
+            background: #2a2a4a;
+            border: 1px solid #4ecca3;
+            border-radius: 4px;
+            padding: 2px 8px;
+            font-family: inherit;
+            color: #4ecca3;
+        }
+        .info {
+            margin-top: 1rem;
+            max-width: 480px;
+            text-align: center;
+            font-size: 0.8rem;
+            color: #666;
+        }
+    </style>
+</head>
+<body>
+    <h1>Creature Quest</h1>
+    <p class="subtitle">A Game Boy Color RPG</p>
+
+    <div id="emulator-container">
+        <div id="game"></div>
+    </div>
+
+    <div class="controls">
+        <kbd>Arrow Keys</kbd> Move &nbsp;
+        <kbd>Z</kbd> A Button &nbsp;
+        <kbd>X</kbd> B Button &nbsp;
+        <kbd>Enter</kbd> Start &nbsp;
+        <kbd>Shift</kbd> Select
+    </div>
+
+    <div class="info">
+        <p>Explore 6 zones, battle wild creatures, defeat bosses, and build your team of 3.</p>
+        <p>Walk through tall grass to find wild creatures. Press Start for the menu.</p>
+    </div>
+
+    <script src="https://cdn.emulatorjs.org/stable/data/loader.js"></script>
+    <script>
+        EJS_player = '#game';
+        EJS_core = 'gambatte';
+        EJS_gameUrl = 'game/creature_quest.gbc';
+        EJS_gameName = 'Creature Quest';
+        EJS_color = '#4ecca3';
+        EJS_startOnLoaded = true;
+        EJS_pathtodata = 'https://cdn.emulatorjs.org/stable/data/';
+    </script>
+</body>
+</html>

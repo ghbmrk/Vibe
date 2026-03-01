@@ -1,149 +1,119 @@
-/* ui.c - UI rendering */
 #include "ui.h"
 #include "gfx_data.h"
+#include <gb/gb.h>
+#include <gb/cgb.h>
 
-static uint8_t prev_keys = 0;
-
-/* ── Character to tile mapping ─────────────────────────────── */
-uint8_t ui_char_to_tile(char c) {
-    if (c >= 'A' && c <= 'Z') return TILE_FONT_BASE + 1 + (c - 'A');
-    if (c >= 'a' && c <= 'z') return TILE_FONT_BASE + 1 + (c - 'a');
-    if (c >= '0' && c <= '9') return TILE_FONT_BASE + 27 + (c - '0');
+/* =========================================================
+   TEXT RENDERING
+   Maps ASCII to our font tile indices
+   ========================================================= */
+static uint8_t char_to_tile(char c) {
+    if (c >= 'A' && c <= 'Z') return TILE_FONT_START + (c - 'A');
+    if (c >= 'a' && c <= 'z') return TILE_FONT_START + 26 + (c - 'a');
+    if (c >= '0' && c <= '9') return TILE_FONT_START + 52 + (c - '0');
     switch (c) {
-        case ' ': return TILE_FONT_BASE;      /* 128 */
-        case '!': return TILE_FONT_BASE + 37;
-        case '?': return TILE_FONT_BASE + 38;
-        case '.': return TILE_FONT_BASE + 39;
-        case ',': return TILE_FONT_BASE + 40;
-        case ':': return TILE_FONT_BASE + 41;
-        case '-': return TILE_FONT_BASE + 42;
-        case '/': return TILE_FONT_BASE + 43;
-        case '+': return TILE_FONT_BASE + 44;
-        case '=': return TILE_FONT_BASE + 45;
-        case '(': return TILE_FONT_BASE + 46;
-        case ')': return TILE_FONT_BASE + 47;
-        case '\'': return TILE_FONT_BASE + 48;
-        case '%': return TILE_FONT_BASE + 49;
-        case '#': return TILE_FONT_BASE + 50;
-        case '>': return TILE_FONT_BASE + 51;
-        case '<': return TILE_FONT_BASE + 52;
-        case '$': return TILE_FONT_BASE + 53;
-        case '@': return TILE_FONT_BASE + 54;
-        case '*': return TILE_FONT_BASE + 55;
-        default:  return TILE_FONT_BASE;       /* space for unknown */
+        case ' ': return TILE_FONT_START + 62;
+        case '!': return TILE_FONT_START + 63;
+        case '?': return TILE_FONT_START + 64;
+        case '.': return TILE_FONT_START + 65;
+        case ',': return TILE_FONT_START + 66;
+        case '-': return TILE_FONT_START + 67;
+        case ':': return TILE_FONT_START + 68;
+        case '/': return TILE_FONT_START + 69;
+        default:  return TILE_FONT_START + 62; /* space for unknown */
     }
 }
 
-/* ── Print string ──────────────────────────────────────────── */
 void ui_print(uint8_t x, uint8_t y, const char *str) {
-    while (*str) {
-        uint8_t tile = ui_char_to_tile(*str);
-        set_bkg_tile_xy(x, y, tile);
-        x++;
-        if (x >= SCREEN_W) break;
-        str++;
+    uint8_t tiles[20];
+    uint8_t i = 0;
+    while (str[i] && i < 20) {
+        tiles[i] = char_to_tile(str[i]);
+        i++;
+    }
+    if (i > 0) {
+        set_bkg_tiles(x, y, i, 1, tiles);
     }
 }
 
-/* ── Print number ──────────────────────────────────────────── */
-void ui_print_num(uint8_t x, uint8_t y, uint16_t num) {
-    char buf[6];
-    int8_t i = 4;
-    buf[5] = '\0';
+void ui_print_num(uint8_t x, uint8_t y, uint16_t num, uint8_t digits) {
+    uint8_t buf[5];
+    uint8_t tiles[5];
+    int8_t i;
 
-    if (num == 0) {
-        buf[4] = '0';
-        i = 3;
-    } else {
-        while (num > 0 && i >= 0) {
-            buf[i + 1] = '0' + (num % 10);
-            num /= 10;
-            if (num > 0) i--;
-        }
+    for (i = digits - 1; i >= 0; i--) {
+        buf[i] = num % 10;
+        num /= 10;
     }
-    ui_print(x, y, &buf[i + 1]);
+    for (i = 0; i < digits; i++) {
+        tiles[i] = TILE_FONT_START + 52 + buf[i];
+    }
+    set_bkg_tiles(x, y, digits, 1, tiles);
 }
 
-/* ── Draw box ──────────────────────────────────────────────── */
+/* =========================================================
+   BOX DRAWING
+   Uses UI tiles for borders
+   ========================================================= */
 void ui_draw_box(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
+    uint8_t row[20];
+    uint8_t i;
+
+    /* Top row */
+    row[0] = TILE_UI_START + 0; /* TL corner */
+    for (i = 1; i < w - 1; i++) row[i] = TILE_UI_START + 1; /* top */
+    row[w - 1] = TILE_UI_START + 2; /* TR corner */
+    set_bkg_tiles(x, y, w, 1, row);
+
+    /* Middle rows */
+    row[0] = TILE_UI_START + 3; /* left */
+    for (i = 1; i < w - 1; i++) row[i] = TILE_UI_START + 4; /* fill */
+    row[w - 1] = TILE_UI_START + 5; /* right */
+    for (i = 1; i < h - 1; i++) {
+        set_bkg_tiles(x, y + i, w, 1, row);
+    }
+
+    /* Bottom row */
+    row[0] = TILE_UI_START + 6; /* BL corner */
+    for (i = 1; i < w - 1; i++) row[i] = TILE_UI_START + 7; /* bottom */
+    row[w - 1] = TILE_UI_START + 8; /* BR corner */
+    set_bkg_tiles(x, y + h - 1, w, 1, row);
+}
+
+void ui_clear_box(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
+    uint8_t row[20];
     uint8_t i, j;
-    uint8_t x2 = x + w - 1;
-    uint8_t y2 = y + h - 1;
-
-    /* Corners */
-    set_bkg_tile_xy(x,  y,  TILE_BOX_TL);
-    set_bkg_tile_xy(x2, y,  TILE_BOX_TR);
-    set_bkg_tile_xy(x,  y2, TILE_BOX_BL);
-    set_bkg_tile_xy(x2, y2, TILE_BOX_BR);
-
-    /* Horizontal edges */
-    for (i = x + 1; i < x2; i++) {
-        set_bkg_tile_xy(i, y,  TILE_BOX_H);
-        set_bkg_tile_xy(i, y2, TILE_BOX_H);
-    }
-
-    /* Vertical edges */
-    for (j = y + 1; j < y2; j++) {
-        set_bkg_tile_xy(x,  j, TILE_BOX_V);
-        set_bkg_tile_xy(x2, j, TILE_BOX_V);
-    }
-
-    /* Fill interior */
-    for (j = y + 1; j < y2; j++) {
-        for (i = x + 1; i < x2; i++) {
-            set_bkg_tile_xy(i, j, TILE_FONT_BASE); /* space */
-        }
-    }
-}
-
-/* ── HP bar ────────────────────────────────────────────────── */
-void ui_draw_hp_bar(uint8_t x, uint8_t y, uint8_t cur, uint8_t max,
-                    uint8_t w) {
-    uint8_t filled, i;
-    if (max == 0) max = 1;
-    filled = (uint8_t)(((uint16_t)cur * (uint16_t)w) / (uint16_t)max);
-    if (cur > 0 && filled == 0) filled = 1;
-
-    for (i = 0; i < w; i++) {
-        set_bkg_tile_xy(x + i, y, (i < filled) ? TILE_HP_FULL : TILE_HP_EMPTY);
-    }
-}
-
-void ui_draw_sp_bar(uint8_t x, uint8_t y, uint8_t cur, uint8_t max,
-                    uint8_t w) {
-    /* Same visual as HP bar for now */
-    ui_draw_hp_bar(x, y, cur, max, w);
-}
-
-/* ── Clear rect ────────────────────────────────────────────── */
-void ui_clear_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h) {
-    uint8_t i, j;
+    for (i = 0; i < w && i < 20; i++) row[i] = TILE_BLANK;
     for (j = 0; j < h; j++) {
-        for (i = 0; i < w; i++) {
-            set_bkg_tile_xy(x + i, y + j, TILE_FONT_BASE);
-        }
+        set_bkg_tiles(x, y + j, w, 1, row);
     }
 }
 
 void ui_clear_screen(void) {
-    ui_clear_rect(0, 0, SCREEN_W, SCREEN_H);
+    uint8_t row[20];
+    uint8_t j;
+    memset(row, TILE_BLANK, 20);
+    for (j = 0; j < 18; j++) {
+        set_bkg_tiles(0, j, 20, 1, row);
+    }
 }
 
-/* ── Debounced key polling ─────────────────────────────────── */
-uint8_t ui_poll_keys(void) {
-    uint8_t keys = joypad();
-    uint8_t pressed = keys & ~prev_keys;
-    prev_keys = keys;
-    return pressed;
+/* =========================================================
+   MESSAGE BOX
+   Two-line message at bottom of screen
+   ========================================================= */
+void ui_show_message(const char *line1, const char *line2) {
+    ui_draw_box(0, 14, 20, 4);
+    if (line1) ui_print(1, 15, line1);
+    if (line2) ui_print(1, 16, line2);
 }
 
-/* ── Wait for button press ─────────────────────────────────── */
-void ui_wait_press(void) {
-    /* Wait for release first */
+void ui_wait_button(void) {
+    /* Wait for any button currently held to be released */
     while (joypad()) {
         wait_vbl_done();
     }
-    /* Wait for press */
+    /* Now wait for new press */
     while (!joypad()) {
         wait_vbl_done();
     }
@@ -153,67 +123,128 @@ void ui_wait_press(void) {
     }
 }
 
-/* ── Message box ───────────────────────────────────────────── */
-void ui_message(const char *line1, const char *line2) {
-    ui_draw_box(0, 13, 20, 5);
-    ui_print(1, 14, line1);
-    if (line2) {
-        ui_print(1, 15, line2);
+/* =========================================================
+   HP BAR
+   Draws a bar using tiles: [==== ] style
+   Width: 8 tiles. Uses HP full/half/empty tiles.
+   ========================================================= */
+void ui_draw_hp_bar(uint8_t x, uint8_t y, uint16_t hp, uint16_t max_hp) {
+    uint8_t bar[8];
+    uint8_t filled;
+    uint8_t i;
+
+    if (max_hp == 0) max_hp = 1;
+    filled = (uint8_t)((hp * 8) / max_hp);
+    if (hp > 0 && filled == 0) filled = 1;
+
+    for (i = 0; i < 8; i++) {
+        if (i < filled) {
+            bar[i] = TILE_UI_START + 9;  /* full */
+        } else {
+            bar[i] = TILE_UI_START + 11; /* empty */
+        }
     }
-    ui_print(17, 16, "...");
-    ui_wait_press();
+    set_bkg_tiles(x, y, 8, 1, bar);
 }
 
-/* ── Menu ──────────────────────────────────────────────────── */
-uint8_t ui_menu(uint8_t x, uint8_t y, const char *const options[],
-                uint8_t count) {
+/* =========================================================
+   MENU SYSTEM
+   Draws menu items with a cursor, handles input
+   Returns selected index or 0xFF if B pressed
+   ========================================================= */
+uint8_t ui_menu(uint8_t x, uint8_t y, const char **items, uint8_t count) {
     uint8_t sel = 0;
+    uint8_t cursor_tile;
+    uint8_t blank_tile;
     uint8_t i;
-    uint8_t pressed;
+    uint8_t prev_pad = 0;
+    uint8_t cur_pad;
 
-    /* Draw options */
+    cursor_tile = TILE_UI_START + 12;
+    blank_tile = TILE_UI_START + 4;
+
+    /* Draw items */
     for (i = 0; i < count; i++) {
-        ui_print(x + 2, y + i, options[i]);
+        ui_print(x + 1, y + i, items[i]);
     }
 
-    for (;;) {
+    while (1) {
         /* Draw cursor */
         for (i = 0; i < count; i++) {
-            set_bkg_tile_xy(x, y + i,
-                            (i == sel) ? TILE_CURSOR : TILE_FONT_BASE);
+            uint8_t t = (i == sel) ? cursor_tile : blank_tile;
+            set_bkg_tiles(x, y + i, 1, 1, &t);
         }
 
         wait_vbl_done();
-        pressed = ui_poll_keys();
+        cur_pad = joypad();
 
-        if (pressed & J_UP) {
+        if ((cur_pad & J_UP) && !(prev_pad & J_UP)) {
             if (sel > 0) sel--;
+            else sel = count - 1;
         }
-        if (pressed & J_DOWN) {
+        if ((cur_pad & J_DOWN) && !(prev_pad & J_DOWN)) {
             if (sel < count - 1) sel++;
+            else sel = 0;
         }
-        if (pressed & J_A) {
+        if ((cur_pad & J_A) && !(prev_pad & J_A)) {
             return sel;
         }
-        if (pressed & J_B) {
-            return 0xFF; /* cancel */
+        if ((cur_pad & J_B) && !(prev_pad & J_B)) {
+            return 0xFF;
         }
+
+        prev_pad = cur_pad;
     }
 }
 
-/* ── Set palette for a region ──────────────────────────────── */
-void ui_set_palette_rect(uint8_t x, uint8_t y, uint8_t w, uint8_t h,
-                         uint8_t pal) {
+uint8_t ui_yes_no(uint8_t x, uint8_t y) {
+    const char *items[] = {"Yes", "No"};
+    uint8_t r = ui_menu(x, y, items, 2);
+    return (r == 0) ? 1 : 0;
+}
+
+/* =========================================================
+   SCREEN TRANSITIONS (CGB palette fading)
+   ========================================================= */
+void ui_fade_out(void) {
+    uint8_t i;
+    for (i = 0; i < 4; i++) {
+        uint8_t val = (i * 64);
+        BGP_REG = val | (val << 2);
+        OBP0_REG = val | (val << 2);
+        wait_vbl_done();
+        wait_vbl_done();
+        wait_vbl_done();
+        wait_vbl_done();
+    }
+}
+
+void ui_fade_in(void) {
+    uint8_t i;
+    for (i = 4; i > 0; i--) {
+        uint8_t val = ((i - 1) * 64);
+        BGP_REG = 0xE4;
+        OBP0_REG = 0xE4;
+        if (i > 1) {
+            BGP_REG = val;
+            OBP0_REG = val;
+        }
+        wait_vbl_done();
+        wait_vbl_done();
+        wait_vbl_done();
+        wait_vbl_done();
+    }
+    BGP_REG = 0xE4;
+    OBP0_REG = 0xE4;
+}
+
+void ui_set_area_palette(uint8_t x, uint8_t y, uint8_t w, uint8_t h, uint8_t pal) {
+    uint8_t pal_row[20];
     uint8_t i, j;
-    uint8_t attr_row[20];
-
-    for (i = 0; i < w && i < 20; i++) {
-        attr_row[i] = pal;
-    }
-
-    VBK_REG = 1;
+    for (i = 0; i < w && i < 20; i++) pal_row[i] = pal;
+    VBK_REG = 1; /* switch to attribute map */
     for (j = 0; j < h; j++) {
-        set_bkg_tiles(x, y + j, w, 1, attr_row);
+        set_bkg_tiles(x, y + j, w, 1, pal_row);
     }
-    VBK_REG = 0;
+    VBK_REG = 0; /* back to tile map */
 }

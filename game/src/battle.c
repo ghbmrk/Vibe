@@ -1,537 +1,686 @@
-/* battle.c - Turn-based battle system */
 #include "battle.h"
 #include "creature.h"
-#include "character.h"
 #include "ui.h"
-#include "gfx_data.h"
 #include "rng.h"
+#include "gfx_data.h"
+#include <gb/gb.h>
+#include <gb/cgb.h>
+#include <stdio.h>
 
-/* ── Local battle state ────────────────────────────────────── */
-static Creature enemy;
-static uint8_t battle_cry_turns;  /* remaining turns for Battle Cry */
+/* Battle-local state */
+static BattleSide player_side;
+static BattleSide enemy_side;
+static uint8_t battle_over;
+static uint8_t battle_won;
+static uint8_t is_boss_battle;
 
-/* ── Draw creature sprites on BG ───────────────────────────── */
-static void draw_creature_sprite(uint8_t bx, uint8_t by,
-                                 uint8_t base_tile, uint8_t pal) {
-    uint8_t x, y;
-    uint8_t tiles[4];
-    uint8_t attrs[4];
+/* Forward declarations */
+static void battle_draw_scene(void);
+static void battle_draw_hud(void);
+static void battle_player_turn(void);
+static void battle_enemy_turn(void);
+static void battle_execute_move(BattleSide *atk, BattleSide *dfn, uint8_t move_idx);
+static void battle_apply_status(BattleSide *side);
+static uint8_t battle_check_faint(BattleSide *side);
+static void battle_award_exp(Creature *winner, Creature *loser);
 
-    for (y = 0; y < 4; y++) {
-        for (x = 0; x < 4; x++) {
-            tiles[x] = base_tile + y * 4 + x;
-            attrs[x] = pal;
-        }
-        set_bkg_tiles(bx, by + y, 4, 1, tiles);
-        VBK_REG = 1;
-        set_bkg_tiles(bx, by + y, 4, 1, attrs);
-        VBK_REG = 0;
-    }
-}
+/* =========================================================
+   BATTLE SCENE DRAWING
+   ========================================================= */
+static void battle_draw_scene(void) {
+    uint8_t pal;
 
-/* ── Draw full battle scene ────────────────────────────────── */
-void battle_draw_scene(const Creature *player_c, const Creature *enemy_c) {
     ui_clear_screen();
 
-    /* Enemy info (top) */
-    ui_print(0, 0, species_names[enemy_c->species]);
-    ui_print(14, 0, "LV");
-    ui_print_num(16, 0, enemy_c->level);
-    ui_draw_hp_bar(0, 1, enemy_c->hp, enemy_c->max_hp, 10);
-    ui_print(11, 1, "HP");
+    /* Enemy creature info - top left */
+    ui_print(1, 0, species_db[enemy_side.mon->species].name);
+    ui_print(1, 1, "Lv");
+    ui_print_num(3, 1, enemy_side.mon->level, 2);
+    ui_draw_hp_bar(1, 2, enemy_side.mon->hp, enemy_side.mon->max_hp);
 
-    /* Enemy sprite (top-left) */
-    gfx_load_creature_sprite(TILE_CREATURE2, enemy_c->species);
-    draw_creature_sprite(1, 2, TILE_CREATURE2, 2);
+    /* Enemy sprite placeholder - show as colored box area */
+    pal = creature_get_palette(enemy_side.mon->species);
+    ui_set_area_palette(13, 1, 4, 4, pal);
 
-    /* Player creature info */
-    ui_print(0, 11, species_names[player_c->species]);
-    ui_print(14, 11, "LV");
-    ui_print_num(16, 11, player_c->level);
-    ui_draw_hp_bar(0, 12, player_c->hp, player_c->max_hp, 8);
-    ui_print(9, 12, "HP");
-    ui_draw_sp_bar(12, 12, player_c->sp, player_c->max_sp, 6);
-    ui_print(19, 12, "S");
+    /* Player creature info - bottom area */
+    ui_print(1, 8, species_db[player_side.mon->species].name);
+    ui_print(1, 9, "Lv");
+    ui_print_num(3, 9, player_side.mon->level, 2);
+    ui_draw_hp_bar(1, 10, player_side.mon->hp, player_side.mon->max_hp);
+    ui_print_num(1, 11, player_side.mon->hp, 3);
+    ui_print(4, 11, "/");
+    ui_print_num(5, 11, player_side.mon->max_hp, 3);
 
-    /* Player creature sprite (bottom-right) */
-    gfx_load_creature_sprite(TILE_CREATURE1, player_c->species);
-    draw_creature_sprite(14, 7, TILE_CREATURE1, 1);
+    /* Player sprite area */
+    pal = creature_get_palette(player_side.mon->species);
+    ui_set_area_palette(2, 5, 4, 4, pal);
+
+    /* Display creature sprites using OBJ sprites */
+    {
+        uint8_t base_tile;
+        uint8_t spal;
+
+        /* Enemy creature sprite (top-right area) */
+        base_tile = PLAYER_TILE_COUNT + (enemy_side.mon->species * 4);
+        spal = creature_get_palette(enemy_side.mon->species);
+        set_sprite_tile(SPR_CREATURE, base_tile);
+        set_sprite_tile(SPR_CREATURE + 1, base_tile + 1);
+        set_sprite_tile(SPR_CREATURE + 2, base_tile + 2);
+        set_sprite_tile(SPR_CREATURE + 3, base_tile + 3);
+        move_sprite(SPR_CREATURE,     112, 16);
+        move_sprite(SPR_CREATURE + 1, 120, 16);
+        move_sprite(SPR_CREATURE + 2, 112, 24);
+        move_sprite(SPR_CREATURE + 3, 120, 24);
+        set_sprite_prop(SPR_CREATURE,     spal);
+        set_sprite_prop(SPR_CREATURE + 1, spal);
+        set_sprite_prop(SPR_CREATURE + 2, spal);
+        set_sprite_prop(SPR_CREATURE + 3, spal);
+    }
 }
 
-/* ── Calculate damage ──────────────────────────────────────── */
-static uint8_t calc_damage(const Creature *attacker, const Creature *defender,
-                           uint8_t move_id) {
-    const MoveData *m = &move_table[move_id];
-    uint16_t dmg;
-    uint8_t eff, stab;
-    uint8_t atk_val = attacker->atk;
-    uint8_t def_val = defender->def;
-    uint8_t i;
-
-    /* Base damage: (ATK * Power) / DEF */
-    dmg = ((uint16_t)atk_val * (uint16_t)m->power);
-    if (def_val < 1) def_val = 1;
-    dmg = dmg / (uint16_t)def_val;
-
-    /* Type effectiveness */
-    eff = type_effectiveness(m->type, defender->type);
-    dmg = (dmg * (uint16_t)eff) / 100;
-
-    /* STAB */
-    stab = type_stab(attacker->type, m->type);
-    dmg = (dmg * (uint16_t)stab) / 100;
-
-    /* Critical hit: SPD/4 % chance, 1.5x */
-    if (rng_range(0, 99) < (attacker->spd / 4)) {
-        dmg = (dmg * 150) / 100;
-    }
-
-    /* Random variance +/- 15% */
-    dmg = (dmg * (uint16_t)rng_range(85, 100)) / 100;
-
-    /* Fury: +25% ATK when below 50% HP */
-    for (i = 0; i < attacker->num_skills; i++) {
-        if (attacker->skills[i] == MSKILL_FURY &&
-            attacker->hp <= attacker->max_hp / 2) {
-            dmg = (dmg * 125) / 100;
-            break;
-        }
-    }
-
-    /* Type Mastery: extra STAB */
-    for (i = 0; i < attacker->num_skills; i++) {
-        if (attacker->skills[i] == MSKILL_TYPE_MASTERY &&
-            attacker->type == m->type && m->type != ELEM_NORMAL) {
-            dmg = (dmg * 125) / 100;
-            break;
-        }
-    }
-
-    /* Thick Hide: defender -2 flat */
-    for (i = 0; i < defender->num_skills; i++) {
-        if (defender->skills[i] == MSKILL_THICK_HIDE) {
-            if (dmg > 2) dmg -= 2; else dmg = 1;
-            break;
-        }
-    }
-
-    /* Iron Halo: -10% if player creature is defender with char skill */
-    if (defender == &game.creature &&
-        character_has_skill(&game.player, CSKILL_IRON_HALO)) {
-        dmg = (dmg * 90) / 100;
-    }
-
-    /* Blessed Rounds: ignore 10% DEF if player creature attacking */
-    if (attacker == &game.creature &&
-        character_has_skill(&game.player, CSKILL_BLESSED)) {
-        dmg = (dmg * 110) / 100;
-    }
-
-    /* Battle Cry: +15% for first 3 turns */
-    if (attacker == &game.creature && battle_cry_turns > 0) {
-        dmg = (dmg * 115) / 100;
-    }
-
-    /* Minimum 1 damage */
-    if (dmg < 1) dmg = 1;
-    if (dmg > 255) dmg = 255;
-
-    return (uint8_t)dmg;
+static void battle_draw_hud(void) {
+    /* Update HP bars */
+    ui_draw_hp_bar(1, 2, enemy_side.mon->hp, enemy_side.mon->max_hp);
+    ui_draw_hp_bar(1, 10, player_side.mon->hp, player_side.mon->max_hp);
+    ui_print_num(1, 11, player_side.mon->hp, 3);
+    ui_print(4, 11, "/");
+    ui_print_num(5, 11, player_side.mon->max_hp, 3);
 }
 
-/* ── Enemy AI: pick a random move ──────────────────────────── */
-static uint8_t enemy_pick_move(void) {
-    uint8_t i, best = 0;
-    uint8_t best_dmg = 0;
+/* =========================================================
+   MOVE EXECUTION
+   ========================================================= */
+static void battle_execute_move(BattleSide *atk, BattleSide *dfn, uint8_t move_idx) {
+    const MoveData *mv;
+    uint16_t damage;
+    uint8_t hit_roll;
+    const char *atk_name;
+    const char *dfn_name;
+    uint8_t eff1, eff2;
 
-    /* Try each move, pick highest damage with some randomness */
-    for (i = 0; i < enemy.num_moves; i++) {
-        if (move_table[enemy.moves[i]].sp_cost <= enemy.sp) {
-            uint8_t est = move_table[enemy.moves[i]].power;
-            uint8_t eff = type_effectiveness(move_table[enemy.moves[i]].type,
-                                             game.creature.type);
-            est = (uint8_t)(((uint16_t)est * (uint16_t)eff) / 100);
-            if (est > best_dmg || (est == best_dmg && rng_chance(40))) {
-                best_dmg = est;
-                best = i;
+    if (move_idx == 0xFF) return;
+
+    mv = &move_db[move_idx];
+    atk_name = species_db[atk->mon->species].name;
+    dfn_name = species_db[dfn->mon->species].name;
+
+    /* Show move usage */
+    ui_show_message(atk_name, mv->name);
+    ui_wait_button();
+
+    /* Accuracy check */
+    hit_roll = rng_range(1, 100);
+    if (hit_roll > mv->accuracy) {
+        ui_show_message(atk_name, "missed!");
+        ui_wait_button();
+        return;
+    }
+
+    /* Calculate and apply damage */
+    damage = calc_damage(atk, dfn, move_idx);
+
+    if (damage > 0) {
+        if (dfn->mon->hp > damage) {
+            dfn->mon->hp -= damage;
+        } else {
+            dfn->mon->hp = 0;
+        }
+
+        /* Type effectiveness messages */
+        eff1 = type_chart[mv->type][species_db[dfn->mon->species].type1];
+        eff2 = type_chart[mv->type][species_db[dfn->mon->species].type2];
+
+        if (eff1 == 0 || eff2 == 0) {
+            ui_show_message("No effect...", "");
+        } else if (eff1 >= 20 || eff2 >= 20) {
+            ui_show_message("Super effective!", "");
+            ui_wait_button();
+        } else if (eff1 <= 5 || eff2 <= 5) {
+            ui_show_message("Not effective...", "");
+            ui_wait_button();
+        }
+    }
+
+    /* Status effect */
+    if (mv->effect != STATUS_NONE && dfn->mon->status == STATUS_NONE) {
+        if (rng_range(1, 100) <= mv->effect_chance) {
+            dfn->mon->status = mv->effect;
+            dfn->mon->status_turns = rng_range(2, 4);
+            switch (mv->effect) {
+                case STATUS_BURN:
+                    ui_show_message(dfn_name, "was burned!");
+                    break;
+                case STATUS_POISON:
+                    ui_show_message(dfn_name, "was poisoned!");
+                    break;
+                case STATUS_PARALYZE:
+                    ui_show_message(dfn_name, "is paralyzed!");
+                    break;
+                case STATUS_SLEEP:
+                    ui_show_message(dfn_name, "fell asleep!");
+                    break;
             }
+            ui_wait_button();
         }
     }
-    return best;
+
+    battle_draw_hud();
 }
 
-/* ── Apply regen skills ────────────────────────────────────── */
-static void apply_regen(Creature *c) {
-    uint8_t i;
-    for (i = 0; i < c->num_skills; i++) {
-        if (c->skills[i] == MSKILL_REGEN) {
-            uint8_t heal = c->max_hp / 20;
-            if (heal < 1) heal = 1;
-            c->hp += heal;
-            if (c->hp > c->max_hp) c->hp = c->max_hp;
+/* Apply status damage/checks at end of turn */
+static void battle_apply_status(BattleSide *side) {
+    if (side->mon->status == STATUS_NONE || side->mon->hp == 0) return;
+
+    switch (side->mon->status) {
+        case STATUS_BURN:
+        case STATUS_POISON: {
+            uint16_t dmg = side->mon->max_hp / 8;
+            if (dmg == 0) dmg = 1;
+            if (side->mon->hp > dmg) {
+                side->mon->hp -= dmg;
+            } else {
+                side->mon->hp = 0;
+            }
+            if (side->mon->status == STATUS_BURN) {
+                ui_show_message(species_db[side->mon->species].name, "is hurt by burn!");
+            } else {
+                ui_show_message(species_db[side->mon->species].name, "is hurt by poison!");
+            }
+            ui_wait_button();
+            battle_draw_hud();
             break;
         }
     }
+
+    /* Decrement status turns */
+    if (side->mon->status_turns > 0) {
+        side->mon->status_turns--;
+        if (side->mon->status_turns == 0) {
+            ui_show_message(species_db[side->mon->species].name, "recovered!");
+            side->mon->status = STATUS_NONE;
+            ui_wait_button();
+        }
+    }
 }
 
-/* ── Check evasion ─────────────────────────────────────────── */
-static uint8_t check_evasion(const Creature *defender) {
-    uint8_t i;
-    for (i = 0; i < defender->num_skills; i++) {
-        if (defender->skills[i] == MSKILL_EVASION) {
-            return rng_chance(10);
-        }
+static uint8_t battle_check_faint(BattleSide *side) {
+    if (side->mon->hp == 0) {
+        ui_show_message(species_db[side->mon->species].name, "fainted!");
+        ui_wait_button();
+        return 1;
     }
     return 0;
 }
 
-/* ── Apply counter damage ──────────────────────────────────── */
-static uint8_t check_counter(const Creature *defender, uint8_t dmg) {
-    uint8_t i;
-    for (i = 0; i < defender->num_skills; i++) {
-        if (defender->skills[i] == MSKILL_COUNTER) {
-            return (dmg * 20) / 100;
-        }
-    }
-    return 0;
-}
-
-/* ── Battle menu ───────────────────────────────────────────── */
-static const char *const battle_menu_opts[] = { "FIGHT", "CATCH", "RUN" };
-static const char *const post_battle_opts[] = { "EAT", "FEED", "CATCH" };
-
-/* ── Run battle ────────────────────────────────────────────── */
-uint8_t battle_run(void) {
-    uint8_t player_spd, enemy_spd;
-    uint8_t player_move, enemy_move;
-    uint8_t dmg, counter_dmg;
+/* =========================================================
+   PLAYER TURN
+   ========================================================= */
+static void battle_player_turn(void) {
+    const char *main_items[] = {"Fight", "Item", "Switch", "Run"};
     uint8_t choice;
-    uint8_t player_first;
-    const MoveData *pm;
+    uint8_t i;
 
-    battle_cry_turns = 0;
-    if (character_has_skill(&game.player, CSKILL_BATTLE_CRY)) {
-        battle_cry_turns = 3;
+    /* Check paralysis/sleep */
+    if (player_side.mon->status == STATUS_PARALYZE) {
+        if (rng_range(1, 4) == 1) {
+            ui_show_message(species_db[player_side.mon->species].name, "is paralyzed!");
+            ui_wait_button();
+            return;
+        }
+    }
+    if (player_side.mon->status == STATUS_SLEEP) {
+        ui_show_message(species_db[player_side.mon->species].name, "is asleep...");
+        ui_wait_button();
+        return;
     }
 
-    /* Set battle palettes */
-    gfx_set_battle_palettes(game.creature.type, enemy.type);
+    ui_draw_box(0, 12, 20, 6);
+    choice = ui_menu(1, 13, main_items, 4);
 
-    /* Draw initial scene */
-    battle_draw_scene(&game.creature, &enemy);
+    switch (choice) {
+        case 0: { /* Fight */
+            const char *move_names[MAX_MOVES];
+            uint8_t move_count = 0;
 
-    /* Intro message */
-    ui_draw_box(0, 13, 20, 5);
-    ui_print(1, 14, "A WILD ");
-    ui_print(8, 14, species_names[enemy.species]);
-    ui_print(1, 15, "APPEARED!");
-    ui_wait_press();
-
-    /* ── Main battle loop ──────────────────────────────────── */
-    while (game.creature.hp > 0 && enemy.hp > 0) {
-        /* Redraw scene */
-        battle_draw_scene(&game.creature, &enemy);
-
-        /* Show menu */
-        ui_draw_box(0, 13, 20, 5);
-        ui_print(1, 14, "WHAT WILL");
-        ui_print(1, 15, species_names[game.creature.species]);
-        ui_print(1, 16, "DO?");
-        ui_draw_box(10, 14, 10, 4);
-        choice = ui_menu(11, 15, battle_menu_opts, 3);
-
-        if (choice == 0xFF) continue; /* cancelled, re-show */
-
-        if (choice == 2) {
-            /* RUN */
-            if (rng_chance(50 + game.creature.spd - enemy.spd)) {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "GOT AWAY");
-                ui_print(1, 15, "SAFELY!");
-                ui_wait_press();
-                return BATTLE_RUN;
-            } else {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "CAN'T ESCAPE!");
-                ui_wait_press();
-                /* Enemy gets a free turn */
-                enemy_move = enemy_pick_move();
-                pm = &move_table[enemy.moves[enemy_move]];
-                if (rng_range(0, 99) < pm->accuracy &&
-                    !check_evasion(&game.creature)) {
-                    dmg = calc_damage(&enemy, &game.creature,
-                                      enemy.moves[enemy_move]);
-                    if (dmg >= game.creature.hp) game.creature.hp = 0;
-                    else game.creature.hp -= dmg;
-                    enemy.sp -= pm->sp_cost;
+            for (i = 0; i < MAX_MOVES; i++) {
+                if (player_side.mon->moves[i] != 0xFF) {
+                    move_names[move_count] = move_db[player_side.mon->moves[i]].name;
+                    move_count++;
                 }
-                battle_draw_scene(&game.creature, &enemy);
-                continue;
+            }
+
+            if (move_count == 0) {
+                ui_show_message("No moves!", "");
+                ui_wait_button();
+                return;
+            }
+
+            ui_draw_box(0, 12, 20, 6);
+            choice = ui_menu(1, 13, move_names, move_count);
+            if (choice == 0xFF) {
+                battle_player_turn(); /* Back to main menu */
+                return;
+            }
+
+            /* Check PP */
+            if (player_side.mon->pp[choice] == 0) {
+                ui_show_message("No PP left!", "");
+                ui_wait_button();
+                battle_player_turn();
+                return;
+            }
+
+            player_side.mon->pp[choice]--;
+            battle_execute_move(&player_side, &enemy_side, player_side.mon->moves[choice]);
+            break;
+        }
+        case 1: { /* Item */
+            const char *item_names[] = {"Potion", "Elixir", "Revive", "Antidote", "SmokeBall"};
+            uint8_t item_choice;
+
+            ui_draw_box(0, 12, 20, 6);
+            /* Show items with counts */
+            for (i = 0; i < 5; i++) {
+                if (save.items[i + 1] > 0) {
+                    ui_print(2, 13 + i, item_names[i]);
+                    ui_print_num(14, 13 + i, save.items[i + 1], 2);
+                }
+            }
+
+            item_choice = ui_menu(1, 13, item_names, 5);
+            if (item_choice == 0xFF) {
+                battle_player_turn();
+                return;
+            }
+            if (save.items[item_choice + 1] == 0) {
+                ui_show_message("None left!", "");
+                ui_wait_button();
+                battle_player_turn();
+                return;
+            }
+
+            save.items[item_choice + 1]--;
+
+            switch (item_choice + 1) {
+                case ITEM_POTION: {
+                    uint16_t heal = player_side.mon->max_hp / 3;
+                    if (heal < 20) heal = 20;
+                    player_side.mon->hp += heal;
+                    if (player_side.mon->hp > player_side.mon->max_hp)
+                        player_side.mon->hp = player_side.mon->max_hp;
+                    ui_show_message("HP restored!", "");
+                    break;
+                }
+                case ITEM_ELIXIR: {
+                    player_side.mon->hp = player_side.mon->max_hp;
+                    ui_show_message("Full HP!", "");
+                    break;
+                }
+                case ITEM_ANTIDOTE: {
+                    player_side.mon->status = STATUS_NONE;
+                    player_side.mon->status_turns = 0;
+                    ui_show_message("Status cured!", "");
+                    break;
+                }
+                case ITEM_SMOKEBALL: {
+                    if (!is_boss_battle) {
+                        ui_show_message("Got away!", "");
+                        ui_wait_button();
+                        battle_over = 1;
+                        return;
+                    } else {
+                        ui_show_message("Can not flee!", "");
+                    }
+                    break;
+                }
+            }
+            ui_wait_button();
+            battle_draw_hud();
+            break;
+        }
+        case 2: { /* Switch */
+            if (save.party_count <= 1) {
+                ui_show_message("No others!", "");
+                ui_wait_button();
+                battle_player_turn();
+                return;
+            }
+            {
+                const char *party_names[MAX_PARTY];
+                uint8_t pc = 0;
+                for (i = 0; i < save.party_count; i++) {
+                    if (&save.party[i] != player_side.mon && save.party[i].hp > 0) {
+                        party_names[pc] = species_db[save.party[i].species].name;
+                        pc++;
+                    }
+                }
+                if (pc == 0) {
+                    ui_show_message("All fainted!", "");
+                    ui_wait_button();
+                    battle_player_turn();
+                    return;
+                }
+                ui_draw_box(0, 12, 20, 6);
+                choice = ui_menu(1, 13, party_names, pc);
+                if (choice != 0xFF) {
+                    /* Find the actual party member */
+                    uint8_t found = 0;
+                    for (i = 0; i < save.party_count; i++) {
+                        if (&save.party[i] != player_side.mon && save.party[i].hp > 0) {
+                            if (found == choice) {
+                                player_side.mon = &save.party[i];
+                                player_side.atk_stage = 0;
+                                player_side.def_stage = 0;
+                                player_side.spatk_stage = 0;
+                                player_side.spdef_stage = 0;
+                                player_side.speed_stage = 0;
+                                ui_show_message("Go,", species_db[player_side.mon->species].name);
+                                ui_wait_button();
+                                battle_draw_scene();
+                                break;
+                            }
+                            found++;
+                        }
+                    }
+                } else {
+                    battle_player_turn();
+                    return;
+                }
+            }
+            break;
+        }
+        case 3: /* Run */
+        default: {
+            if (is_boss_battle) {
+                ui_show_message("Can not flee", "from a boss!");
+                ui_wait_button();
+                battle_player_turn();
+                return;
+            }
+            /* Run success based on speed */
+            if (rng_range(0, 100) < 50 + player_side.mon->speed) {
+                ui_show_message("Got away!", "");
+                ui_wait_button();
+                battle_over = 1;
+                return;
+            } else {
+                ui_show_message("Can not escape!", "");
+                ui_wait_button();
+            }
+            break;
+        }
+    }
+}
+
+/* =========================================================
+   ENEMY TURN (AI)
+   ========================================================= */
+static void battle_enemy_turn(void) {
+    uint8_t i;
+    uint8_t best_move = 0;
+    uint16_t best_dmg = 0;
+
+    /* Check paralysis/sleep */
+    if (enemy_side.mon->status == STATUS_PARALYZE) {
+        if (rng_range(1, 4) == 1) {
+            ui_show_message(species_db[enemy_side.mon->species].name, "is paralyzed!");
+            ui_wait_button();
+            return;
+        }
+    }
+    if (enemy_side.mon->status == STATUS_SLEEP) {
+        ui_show_message(species_db[enemy_side.mon->species].name, "is asleep...");
+        ui_wait_button();
+        return;
+    }
+
+    /* Simple AI: pick highest damage move */
+    for (i = 0; i < MAX_MOVES; i++) {
+        if (enemy_side.mon->moves[i] != 0xFF && enemy_side.mon->pp[i] > 0) {
+            uint16_t dmg = calc_damage(&enemy_side, &player_side, enemy_side.mon->moves[i]);
+            if (dmg > best_dmg) {
+                best_dmg = dmg;
+                best_move = i;
             }
         }
+    }
 
-        if (choice == 1) {
-            /* CATCH attempt */
-            uint8_t catch_rate = 30 + character_catch_bonus(&game.player);
-            /* Lower HP = higher catch rate */
-            catch_rate += (uint8_t)((uint16_t)(enemy.max_hp - enemy.hp) * 20 /
-                                    (uint16_t)enemy.max_hp);
-            if (character_has_skill(&game.player, CSKILL_VETERANS_EYE))
-                catch_rate += 10;
-            if (catch_rate > 95) catch_rate = 95;
+    if (enemy_side.mon->moves[best_move] != 0xFF && enemy_side.mon->pp[best_move] > 0) {
+        enemy_side.mon->pp[best_move]--;
+        battle_execute_move(&enemy_side, &player_side, enemy_side.mon->moves[best_move]);
+    }
+}
 
-            ui_draw_box(0, 13, 20, 5);
-            ui_print(1, 14, "THREW A TRAP...");
-            ui_wait_press();
+/* =========================================================
+   EXP AWARD
+   ========================================================= */
+static void battle_award_exp(Creature *winner, Creature *loser) {
+    uint16_t base_exp;
+    uint16_t gained;
+    uint8_t leveled;
 
-            if (rng_chance(catch_rate)) {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "CAUGHT");
-                ui_print(1, 15, species_names[enemy.species]);
-                ui_print(1, 16, "!");
-                ui_wait_press();
-                /* Replace player creature */
-                memcpy(&game.creature, &enemy, sizeof(Creature));
-                creature_heal(&game.creature);
-                game.creatures_caught++;
-                return BATTLE_WIN;
-            } else {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "IT BROKE FREE!");
-                ui_wait_press();
-                /* Enemy gets a free turn */
-                enemy_move = enemy_pick_move();
-                pm = &move_table[enemy.moves[enemy_move]];
-                if (rng_range(0, 99) < pm->accuracy &&
-                    !check_evasion(&game.creature)) {
-                    dmg = calc_damage(&enemy, &game.creature,
-                                      enemy.moves[enemy_move]);
-                    if (dmg >= game.creature.hp) game.creature.hp = 0;
-                    else game.creature.hp -= dmg;
-                    enemy.sp -= pm->sp_cost;
-                }
-                battle_draw_scene(&game.creature, &enemy);
-                continue;
-            }
-        }
+    /* EXP = (base_hp of loser species * loser level) / 5 */
+    base_exp = species_db[loser->species].base_hp;
+    gained = (base_exp * loser->level) / 5;
+    if (is_boss_battle) gained *= 2;
+    if (gained < 1) gained = 1;
 
-        /* FIGHT: choose a move */
+    winner->exp += gained;
+
+    ui_show_message("Gained EXP!", "");
+    ui_print_num(12, 15, gained, 4);
+    ui_wait_button();
+
+    /* Check level up */
+    leveled = creature_check_levelup(winner);
+    if (leveled) {
+        ui_show_message(species_db[winner->species].name, "leveled up!");
+        ui_print(14, 16, "Lv");
+        ui_print_num(16, 16, winner->level, 2);
+        ui_wait_button();
+
+        /* Check evolution */
         {
-            const char *move_opts[MAX_MOVES];
-            uint8_t i;
-            for (i = 0; i < game.creature.num_moves; i++) {
-                move_opts[i] = move_names[game.creature.moves[i]];
-            }
-            ui_draw_box(0, 13, 20, 5);
-            choice = ui_menu(1, 14, move_opts, game.creature.num_moves);
-            if (choice == 0xFF) continue; /* back to main menu */
-
-            player_move = choice;
-        }
-
-        /* Check SP */
-        pm = &move_table[game.creature.moves[player_move]];
-        if (pm->sp_cost > game.creature.sp) {
-            ui_draw_box(0, 13, 20, 5);
-            ui_print(1, 14, "NOT ENOUGH SP!");
-            ui_wait_press();
-            continue;
-        }
-
-        /* Determine turn order */
-        player_spd = game.creature.spd;
-        enemy_spd = enemy.spd;
-        if (player_spd > enemy_spd) {
-            player_first = 1;
-        } else if (enemy_spd > player_spd) {
-            player_first = 0;
-        } else {
-            /* Speed tie */
-            if (character_has_skill(&game.player, CSKILL_TACTICAL)) {
-                player_first = 1;
-            } else {
-                player_first = rng_chance(50);
+            uint8_t old_species = winner->species;
+            creature_check_evolution(winner);
+            if (winner->species != old_species) {
+                ui_show_message(species_db[old_species].name, "is evolving!");
+                ui_wait_button();
+                ui_show_message("Evolved into", species_db[winner->species].name);
+                ui_wait_button();
             }
         }
+    }
+}
 
-        enemy_move = enemy_pick_move();
+/* =========================================================
+   MAIN BATTLE LOOP
+   ========================================================= */
+static uint8_t run_battle(Creature *wild_mon) {
+    uint8_t player_faster;
 
-        /* ── Execute turns ─────────────────────────────────── */
-        if (player_first) {
-            /* Player attacks */
-            game.creature.sp -= pm->sp_cost;
-            ui_draw_box(0, 13, 20, 5);
-            ui_print(1, 14, species_names[game.creature.species]);
-            ui_print(1, 15, "USED ");
-            ui_print(6, 15, move_names[game.creature.moves[player_move]]);
-            ui_wait_press();
+    /* Initialize sides */
+    player_side.mon = &save.party[0]; /* Lead creature */
+    player_side.atk_stage = 0;
+    player_side.def_stage = 0;
+    player_side.spatk_stage = 0;
+    player_side.spdef_stage = 0;
+    player_side.speed_stage = 0;
+    player_side.is_defending = 0;
 
-            if (rng_range(0, 99) < pm->accuracy &&
-                !check_evasion(&enemy)) {
-                dmg = calc_damage(&game.creature, &enemy,
-                                  game.creature.moves[player_move]);
-                if (dmg >= enemy.hp) enemy.hp = 0;
-                else enemy.hp -= dmg;
+    enemy_side.mon = wild_mon;
+    enemy_side.atk_stage = 0;
+    enemy_side.def_stage = 0;
+    enemy_side.spatk_stage = 0;
+    enemy_side.spdef_stage = 0;
+    enemy_side.speed_stage = 0;
+    enemy_side.is_defending = 0;
 
-                counter_dmg = check_counter(&enemy, dmg);
-                if (counter_dmg > 0) {
-                    if (counter_dmg >= game.creature.hp)
-                        game.creature.hp = 0;
-                    else
-                        game.creature.hp -= counter_dmg;
-                }
-            } else {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "IT MISSED!");
-                ui_wait_press();
-            }
+    battle_over = 0;
+    battle_won = 0;
 
-            battle_draw_scene(&game.creature, &enemy);
-
-            /* Check enemy KO */
-            if (enemy.hp == 0) break;
-
-            /* Enemy attacks */
-            {
-                const MoveData *em = &move_table[enemy.moves[enemy_move]];
-                if (em->sp_cost <= enemy.sp) {
-                    enemy.sp -= em->sp_cost;
-                    ui_draw_box(0, 13, 20, 5);
-                    ui_print(1, 14, species_names[enemy.species]);
-                    ui_print(1, 15, "USED ");
-                    ui_print(6, 15, move_names[enemy.moves[enemy_move]]);
-                    ui_wait_press();
-
-                    if (rng_range(0, 99) < em->accuracy &&
-                        !check_evasion(&game.creature)) {
-                        dmg = calc_damage(&enemy, &game.creature,
-                                          enemy.moves[enemy_move]);
-                        if (dmg >= game.creature.hp) game.creature.hp = 0;
-                        else game.creature.hp -= dmg;
-
-                        counter_dmg = check_counter(&game.creature, dmg);
-                        if (counter_dmg > 0) {
-                            if (counter_dmg >= enemy.hp) enemy.hp = 0;
-                            else enemy.hp -= counter_dmg;
-                        }
-                    } else {
-                        ui_draw_box(0, 13, 20, 5);
-                        ui_print(1, 14, "IT MISSED!");
-                        ui_wait_press();
-                    }
-                }
-            }
-        } else {
-            /* Enemy attacks first */
-            {
-                const MoveData *em = &move_table[enemy.moves[enemy_move]];
-                if (em->sp_cost <= enemy.sp) {
-                    enemy.sp -= em->sp_cost;
-                    ui_draw_box(0, 13, 20, 5);
-                    ui_print(1, 14, species_names[enemy.species]);
-                    ui_print(1, 15, "USED ");
-                    ui_print(6, 15, move_names[enemy.moves[enemy_move]]);
-                    ui_wait_press();
-
-                    if (rng_range(0, 99) < em->accuracy &&
-                        !check_evasion(&game.creature)) {
-                        dmg = calc_damage(&enemy, &game.creature,
-                                          enemy.moves[enemy_move]);
-                        if (dmg >= game.creature.hp) game.creature.hp = 0;
-                        else game.creature.hp -= dmg;
-
-                        counter_dmg = check_counter(&game.creature, dmg);
-                        if (counter_dmg > 0) {
-                            if (counter_dmg >= enemy.hp) enemy.hp = 0;
-                            else enemy.hp -= counter_dmg;
-                        }
-                    } else {
-                        ui_draw_box(0, 13, 20, 5);
-                        ui_print(1, 14, "IT MISSED!");
-                        ui_wait_press();
-                    }
-                }
-            }
-
-            battle_draw_scene(&game.creature, &enemy);
-
-            /* Check player KO */
-            if (game.creature.hp == 0) break;
-
-            /* Player attacks */
-            game.creature.sp -= pm->sp_cost;
-            ui_draw_box(0, 13, 20, 5);
-            ui_print(1, 14, species_names[game.creature.species]);
-            ui_print(1, 15, "USED ");
-            ui_print(6, 15, move_names[game.creature.moves[player_move]]);
-            ui_wait_press();
-
-            if (rng_range(0, 99) < pm->accuracy &&
-                !check_evasion(&enemy)) {
-                dmg = calc_damage(&game.creature, &enemy,
-                                  game.creature.moves[player_move]);
-                if (dmg >= enemy.hp) enemy.hp = 0;
-                else enemy.hp -= dmg;
-
-                counter_dmg = check_counter(&enemy, dmg);
-                if (counter_dmg > 0) {
-                    if (counter_dmg >= game.creature.hp)
-                        game.creature.hp = 0;
-                    else
-                        game.creature.hp -= counter_dmg;
-                }
-            } else {
-                ui_draw_box(0, 13, 20, 5);
-                ui_print(1, 14, "IT MISSED!");
-                ui_wait_press();
+    /* Find first alive party member */
+    {
+        uint8_t i;
+        for (i = 0; i < save.party_count; i++) {
+            if (save.party[i].hp > 0) {
+                player_side.mon = &save.party[i];
+                break;
             }
         }
-
-        battle_draw_scene(&game.creature, &enemy);
-
-        /* Apply regen at end of turn */
-        apply_regen(&game.creature);
-        apply_regen(&enemy);
-
-        /* Decrement battle cry */
-        if (battle_cry_turns > 0) battle_cry_turns--;
     }
 
-    /* ── Battle end ────────────────────────────────────────── */
-    if (enemy.hp == 0) {
-        /* Victory */
-        ui_draw_box(0, 13, 20, 5);
-        ui_print(1, 14, species_names[enemy.species]);
-        ui_print(1, 15, "WAS DEFEATED!");
-        ui_wait_press();
-        game.battles_won++;
-        return BATTLE_WIN;
+    ui_fade_out();
+    battle_draw_scene();
+    ui_fade_in();
+
+    /* Encounter message */
+    if (is_boss_battle) {
+        ui_show_message("Boss battle!", species_db[wild_mon->species].name);
     } else {
-        /* Defeat */
-        ui_draw_box(0, 13, 20, 5);
-        ui_print(1, 14, species_names[game.creature.species]);
-        ui_print(1, 15, "FAINTED...");
-        ui_wait_press();
-        return BATTLE_LOSE;
+        ui_show_message("Wild", species_db[wild_mon->species].name);
     }
+    ui_wait_button();
+
+    /* Main battle loop */
+    while (!battle_over) {
+        /* Determine turn order by speed */
+        player_faster = (player_side.mon->speed >= enemy_side.mon->speed);
+
+        if (player_faster) {
+            battle_player_turn();
+            if (battle_over) break;
+            if (battle_check_faint(&enemy_side)) {
+                battle_won = 1;
+                break;
+            }
+
+            battle_enemy_turn();
+            if (battle_check_faint(&player_side)) {
+                /* Try to send next creature */
+                uint8_t i, found = 0;
+                for (i = 0; i < save.party_count; i++) {
+                    if (save.party[i].hp > 0) {
+                        player_side.mon = &save.party[i];
+                        player_side.atk_stage = 0;
+                        player_side.def_stage = 0;
+                        player_side.spatk_stage = 0;
+                        player_side.spdef_stage = 0;
+                        player_side.speed_stage = 0;
+                        ui_show_message("Go,", species_db[player_side.mon->species].name);
+                        ui_wait_button();
+                        battle_draw_scene();
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) {
+                    battle_won = 0;
+                    break;
+                }
+            }
+        } else {
+            battle_enemy_turn();
+            if (battle_check_faint(&player_side)) {
+                uint8_t i, found = 0;
+                for (i = 0; i < save.party_count; i++) {
+                    if (save.party[i].hp > 0) {
+                        player_side.mon = &save.party[i];
+                        player_side.atk_stage = 0;
+                        player_side.def_stage = 0;
+                        player_side.spatk_stage = 0;
+                        player_side.spdef_stage = 0;
+                        player_side.speed_stage = 0;
+                        ui_show_message("Go,", species_db[player_side.mon->species].name);
+                        ui_wait_button();
+                        battle_draw_scene();
+                        found = 1;
+                        break;
+                    }
+                }
+                if (!found) {
+                    battle_won = 0;
+                    break;
+                }
+            }
+
+            battle_player_turn();
+            if (battle_over) break;
+            if (battle_check_faint(&enemy_side)) {
+                battle_won = 1;
+                break;
+            }
+        }
+
+        /* End-of-turn status effects */
+        battle_apply_status(&player_side);
+        if (battle_check_faint(&player_side)) {
+            uint8_t i, found = 0;
+            for (i = 0; i < save.party_count; i++) {
+                if (save.party[i].hp > 0) {
+                    player_side.mon = &save.party[i];
+                    found = 1;
+                    break;
+                }
+            }
+            if (!found) { battle_won = 0; break; }
+        }
+
+        battle_apply_status(&enemy_side);
+        if (battle_check_faint(&enemy_side)) {
+            battle_won = 1;
+            break;
+        }
+
+        battle_draw_hud();
+    }
+
+    /* Battle result */
+    if (battle_won) {
+        ui_show_message("You won!", "");
+        ui_wait_button();
+        battle_award_exp(player_side.mon, wild_mon);
+
+        /* Gold reward */
+        {
+            uint16_t gold = (uint16_t)(wild_mon->level * 3);
+            if (is_boss_battle) gold *= 3;
+            save.gold += gold;
+            ui_show_message("Got gold:", "");
+            ui_print_num(10, 15, gold, 4);
+            ui_wait_button();
+        }
+    } else if (!battle_over) {
+        /* Total party wipe */
+        ui_show_message("Blacked out!", "");
+        ui_wait_button();
+        /* Heal party and return to zone start */
+        {
+            uint8_t i;
+            for (i = 0; i < save.party_count; i++) {
+                creature_heal_full(&save.party[i]);
+            }
+        }
+    }
+
+    /* Hide battle sprites */
+    move_sprite(SPR_CREATURE, 0, 0);
+    move_sprite(SPR_CREATURE + 1, 0, 0);
+    move_sprite(SPR_CREATURE + 2, 0, 0);
+    move_sprite(SPR_CREATURE + 3, 0, 0);
+
+    return battle_won;
 }
 
-/* ── Initialize battle with enemy ──────────────────────────── */
-void battle_init(Creature *e) {
-    memcpy(&enemy, e, sizeof(Creature));
+/* Public interface */
+uint8_t battle_wild(Creature *wild) {
+    is_boss_battle = 0;
+    return run_battle(wild);
 }
 
-/* ── Post-battle choice ────────────────────────────────────── */
-uint8_t battle_post_choice(const Creature *defeated) {
-    uint8_t choice;
-    (void)defeated;
-
-    ui_draw_box(0, 13, 20, 5);
-    ui_print(1, 14, "WHAT DO YOU DO");
-    ui_print(1, 15, "WITH THE PREY?");
-    ui_draw_box(10, 14, 10, 4);
-    choice = ui_menu(11, 15, post_battle_opts, 3);
-
-    if (choice == 0xFF) choice = 0; /* default to EAT if cancelled */
-    return choice;
+uint8_t battle_boss(uint8_t species, uint8_t level) {
+    Creature boss;
+    creature_init(&boss, species, level);
+    is_boss_battle = 1;
+    return run_battle(&boss);
 }

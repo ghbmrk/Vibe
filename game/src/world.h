@@ -1,25 +1,20 @@
-/* world.h - Overworld rendering and player movement */
 #ifndef WORLD_H
 #define WORLD_H
 
 #include "common.h"
 
-/* Render the visible portion of the current map */
-void world_render_map(void);
+/* Generate and draw the current zone map */
+void world_generate_zone(void);
+void world_draw(void);
+void world_update(void);
 
-/* Render the gym interior (single screen) */
-void world_render_gym(void);
+/* Handle player movement, returns 1 if encounter triggered */
+uint8_t world_move_player(uint8_t dir);
 
-/* Update player position and camera. Returns tile stepped onto. */
-uint8_t world_update(void);
+/* Check tile at position */
+uint8_t world_get_tile(uint8_t x, uint8_t y);
 
-/* Set up player sprite on screen */
-void world_show_player(void);
-
-/* Hide player sprite (for battles/menus) */
-void world_hide_player(void);
-
-/* Set terrain palette attributes for visible tiles */
-void world_set_tile_palettes(void);
+/* Shop interaction */
+void world_shop(void);
 
 #endif

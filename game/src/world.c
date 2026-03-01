@@ -1,206 +1,346 @@
-/* world.c - Overworld rendering and movement */
 #include "world.h"
+#include "creature.h"
 #include "ui.h"
+#include "rng.h"
 #include "gfx_data.h"
+#include "battle.h"
+#include <gb/gb.h>
+#include <gb/cgb.h>
 
-/* ── Camera calculation ────────────────────────────────────── */
-static uint8_t cam_x, cam_y;
+/* Map data for current zone */
+static uint8_t map_tiles[MAP_W * MAP_H];
 
-static void update_camera(void) {
-    int16_t cx, cy;
+/* Terrain tile indices in terrain tileset */
+#define T_GRASS1  0
+#define T_GRASS2  1
+#define T_TALL    2
+#define T_PATH    3
+#define T_WATER   4
+#define T_WATER2  5
+#define T_TREETOP 6
+#define T_TREEBOTTOM 7
+#define T_ROCK    8
+#define T_HOUSE_TL 9
+#define T_HOUSE_TR 10
+#define T_HOUSE_BL 11
+#define T_HOUSE_BR 12
+#define T_DOOR    13
+#define T_SIGN    14
+#define T_BRIDGE  15
 
-    if (game.in_gym) {
-        /* Gym is single-screen, no scrolling */
-        cam_x = 0;
-        cam_y = 0;
-        return;
-    }
-
-    cx = (int16_t)game.px * 8 - 80;
-    cy = (int16_t)game.py * 8 - 72;
-
-    if (cx < 0) cx = 0;
-    if (cy < 0) cy = 0;
-    if (cx > (MAP_W - SCREEN_W) * 8) cx = (MAP_W - SCREEN_W) * 8;
-    if (cy > (MAP_H - SCREEN_H) * 8) cy = (MAP_H - SCREEN_H) * 8;
-
-    cam_x = (uint8_t)cx;
-    cam_y = (uint8_t)cy;
-}
-
-/* ── Get palette for a terrain tile ────────────────────────── */
-static uint8_t tile_palette(uint8_t tile) {
+/* Is this tile walkable? */
+static uint8_t is_walkable(uint8_t tile) {
     switch (tile) {
-        case TILE_GRASS:
-        case TILE_TALL_GRASS: return PAL_GRASS;
-        case TILE_WALL:
-        case TILE_ROCK:       return PAL_TREE;
-        case TILE_PATH:       return PAL_PATH;
-        case TILE_WATER:      return PAL_WATER;
-        case TILE_GYM_FLOOR:
-        case TILE_BOSS_MARK:  return PAL_GYM;
-        case TILE_DOOR:
-        case TILE_VENDOR:     return PAL_ACCENT;
-        default:              return PAL_UI;
+        case T_GRASS1:
+        case T_GRASS2:
+        case T_TALL:
+        case T_PATH:
+        case T_BRIDGE:
+        case T_DOOR:
+        case T_SIGN:
+            return 1;
+        default:
+            return 0;
     }
 }
 
-/* ── Render overworld map ──────────────────────────────────── */
-void world_render_map(void) {
+/* =========================================================
+   PROCEDURAL ZONE GENERATION
+   Creates a unique map for each zone using seed
+   ========================================================= */
+void world_generate_zone(void) {
     uint8_t x, y;
-    uint8_t row_tiles[MAP_W];
-    uint8_t row_attrs[MAP_W];
+    uint8_t zone = save.current_zone;
+    uint16_t i;
 
+    /* Seed RNG with zone number for consistent generation */
+    /* (we re-seed the rng so zones are always the same layout) */
+
+    /* Fill with base grass */
+    for (i = 0; i < MAP_W * MAP_H; i++) {
+        map_tiles[i] = T_GRASS1;
+    }
+
+    /* Border with trees */
+    for (x = 0; x < MAP_W; x++) {
+        map_tiles[x] = T_TREETOP;
+        map_tiles[MAP_W + x] = T_TREEBOTTOM;
+        map_tiles[(MAP_H - 2) * MAP_W + x] = T_TREETOP;
+        map_tiles[(MAP_H - 1) * MAP_W + x] = T_TREEBOTTOM;
+    }
+    for (y = 0; y < MAP_H; y++) {
+        map_tiles[y * MAP_W] = T_ROCK;
+        map_tiles[y * MAP_W + MAP_W - 1] = T_ROCK;
+    }
+
+    /* Path from left to right through center */
+    for (x = 1; x < MAP_W - 1; x++) {
+        uint8_t py = 8 + (x % 3 == 0 ? 1 : 0) - (x % 5 == 0 ? 1 : 0);
+        map_tiles[py * MAP_W + x] = T_PATH;
+        if (py > 2 && py < MAP_H - 2) {
+            map_tiles[(py - 1) * MAP_W + x] = T_PATH;
+        }
+    }
+
+    /* Scatter tall grass (encounter zones) */
+    for (i = 0; i < 30 + zone * 5; i++) {
+        x = rng_range(2, MAP_W - 3);
+        y = rng_range(3, MAP_H - 4);
+        if (map_tiles[y * MAP_W + x] == T_GRASS1) {
+            map_tiles[y * MAP_W + x] = T_TALL;
+        }
+    }
+
+    /* Add some flower patches */
+    for (i = 0; i < 10; i++) {
+        x = rng_range(2, MAP_W - 3);
+        y = rng_range(3, MAP_H - 4);
+        if (map_tiles[y * MAP_W + x] == T_GRASS1) {
+            map_tiles[y * MAP_W + x] = T_GRASS2;
+        }
+    }
+
+    /* Water feature based on zone */
+    if (zone == 1 || zone == 4) { /* Water zones */
+        for (y = 5; y < 8; y++) {
+            for (x = 3; x < 8; x++) {
+                map_tiles[y * MAP_W + x] = ((x + y) & 1) ? T_WATER : T_WATER2;
+            }
+        }
+        /* Bridge across */
+        map_tiles[6 * MAP_W + 5] = T_BRIDGE;
+        map_tiles[6 * MAP_W + 6] = T_BRIDGE;
+    }
+
+    /* Rocks/boulders */
+    for (i = 0; i < 5 + zone; i++) {
+        x = rng_range(2, MAP_W - 3);
+        y = rng_range(3, MAP_H - 4);
+        if (map_tiles[y * MAP_W + x] == T_GRASS1) {
+            map_tiles[y * MAP_W + x] = T_ROCK;
+        }
+    }
+
+    /* Trees scattered */
+    for (i = 0; i < 4 + zone; i++) {
+        x = rng_range(2, MAP_W - 3);
+        y = rng_range(4, MAP_H - 4);
+        if (map_tiles[y * MAP_W + x] == T_GRASS1 &&
+            map_tiles[(y - 1) * MAP_W + x] == T_GRASS1) {
+            map_tiles[(y - 1) * MAP_W + x] = T_TREETOP;
+            map_tiles[y * MAP_W + x] = T_TREEBOTTOM;
+        }
+    }
+
+    /* Shop building (if zone has one) */
+    if (zone_db[zone].has_shop) {
+        map_tiles[3 * MAP_W + 14] = T_HOUSE_TL;
+        map_tiles[3 * MAP_W + 15] = T_HOUSE_TR;
+        map_tiles[4 * MAP_W + 14] = T_HOUSE_BL;
+        map_tiles[4 * MAP_W + 15] = T_HOUSE_BR;
+        map_tiles[4 * MAP_W + 14] = T_DOOR; /* door on bottom-left */
+    }
+
+    /* Sign at entrance */
+    map_tiles[8 * MAP_W + 2] = T_SIGN;
+
+    /* Boss area marker (path section at right side) */
+    for (y = 6; y < 11; y++) {
+        map_tiles[y * MAP_W + MAP_W - 2] = T_PATH;
+    }
+
+    /* Set player start position */
+    if (save.player_x == 0 && save.player_y == 0) {
+        save.player_x = 3;
+        save.player_y = 9;
+    }
+}
+
+/* =========================================================
+   DRAW THE MAP
+   ========================================================= */
+void world_draw(void) {
+    uint8_t x, y;
+    uint8_t tile_row[MAP_W];
+    uint8_t pal = zone_db[save.current_zone].terrain_palette;
+
+    /* Set BG palette for entire map */
+    ui_set_area_palette(0, 0, 20, 18, pal);
+
+    /* Draw tile map */
     for (y = 0; y < MAP_H; y++) {
         for (x = 0; x < MAP_W; x++) {
-            row_tiles[x] = game.zone.map[y][x];
-            row_attrs[x] = tile_palette(game.zone.map[y][x]);
+            tile_row[x] = TILE_TERRAIN_START + map_tiles[y * MAP_W + x];
         }
-        set_bkg_tiles(0, y, MAP_W, 1, row_tiles);
-        VBK_REG = 1;
-        set_bkg_tiles(0, y, MAP_W, 1, row_attrs);
-        VBK_REG = 0;
+        set_bkg_tiles(0, y, MAP_W, 1, tile_row);
     }
 
-    update_camera();
-    SCX_REG = cam_x;
-    SCY_REG = cam_y;
+    /* Draw player sprite */
+    move_sprite(SPR_PLAYER,     (save.player_x * 8) + 8, (save.player_y * 8) + 16);
+    move_sprite(SPR_PLAYER + 1, (save.player_x * 8) + 16, (save.player_y * 8) + 16);
+    move_sprite(SPR_PLAYER + 2, (save.player_x * 8) + 8, (save.player_y * 8) + 24);
+    move_sprite(SPR_PLAYER + 3, (save.player_x * 8) + 16, (save.player_y * 8) + 24);
+
+    /* Set player sprite tiles and palette */
+    set_sprite_tile(SPR_PLAYER, 0);
+    set_sprite_tile(SPR_PLAYER + 1, 1);
+    set_sprite_tile(SPR_PLAYER + 2, 2);
+    set_sprite_tile(SPR_PLAYER + 3, 3);
+    set_sprite_prop(SPR_PLAYER, 0);
+    set_sprite_prop(SPR_PLAYER + 1, 0);
+    set_sprite_prop(SPR_PLAYER + 2, 0);
+    set_sprite_prop(SPR_PLAYER + 3, 0);
+
+    /* Zone name at top */
+    ui_set_area_palette(0, 0, 20, 1, 0); /* UI palette for text */
+    ui_print(0, 0, zone_db[save.current_zone].name);
 }
 
-/* ── Render gym map ────────────────────────────────────────── */
-void world_render_gym(void) {
-    uint8_t x, y;
-    uint8_t row_tiles[SCREEN_W];
-    uint8_t row_attrs[SCREEN_W];
+/* =========================================================
+   PLAYER MOVEMENT
+   Returns 1 if random encounter triggered
+   ========================================================= */
+uint8_t world_move_player(uint8_t dir) {
+    uint8_t new_x = save.player_x;
+    uint8_t new_y = save.player_y;
+    uint8_t tile;
 
-    for (y = 0; y < SCREEN_H; y++) {
-        for (x = 0; x < SCREEN_W; x++) {
-            row_tiles[x] = game.zone.gym_map[y][x];
-            row_attrs[x] = tile_palette(game.zone.gym_map[y][x]);
+    save.player_dir = dir;
+
+    switch (dir) {
+        case DIR_UP:    if (new_y > 0) new_y--; break;
+        case DIR_DOWN:  if (new_y < MAP_H - 1) new_y++; break;
+        case DIR_LEFT:  if (new_x > 0) new_x--; break;
+        case DIR_RIGHT: if (new_x < MAP_W - 1) new_x++; break;
+    }
+
+    tile = map_tiles[new_y * MAP_W + new_x];
+
+    /* Check for sign interaction */
+    if (tile == T_SIGN) {
+        ui_show_message(zone_db[save.current_zone].name, "Zone");
+        ui_wait_button();
+        world_draw();
+        return 0;
+    }
+
+    /* Check for door (shop) */
+    if (tile == T_DOOR) {
+        world_shop();
+        world_draw();
+        return 0;
+    }
+
+    /* Check for zone exit (right edge path) */
+    if (new_x >= MAP_W - 2 && tile == T_PATH) {
+        /* Check if boss needs to be beaten first */
+        if (save.zones_cleared <= save.current_zone) {
+            /* Boss battle! */
+            uint8_t won = battle_boss(
+                zone_db[save.current_zone].boss_species,
+                zone_db[save.current_zone].boss_level
+            );
+            if (won) {
+                save.zones_cleared = save.current_zone + 1;
+                save.badges++;
+                ui_show_message("Zone cleared!", "Badge earned!");
+                ui_wait_button();
+
+                /* Advance to next zone */
+                if (save.current_zone < NUM_ZONES - 1) {
+                    save.current_zone++;
+                    save.player_x = 3;
+                    save.player_y = 9;
+                    world_generate_zone();
+                }
+            }
+            world_draw();
+            return 0;
+        } else if (save.current_zone < NUM_ZONES - 1) {
+            /* Already cleared, can advance */
+            save.current_zone++;
+            save.player_x = 3;
+            save.player_y = 9;
+            world_generate_zone();
+            world_draw();
+            return 0;
         }
-        set_bkg_tiles(0, y, SCREEN_W, 1, row_tiles);
-        VBK_REG = 1;
-        set_bkg_tiles(0, y, SCREEN_W, 1, row_attrs);
-        VBK_REG = 0;
     }
 
-    SCX_REG = 0;
-    SCY_REG = 0;
-}
-
-/* ── Show player sprite ────────────────────────────────────── */
-void world_show_player(void) {
-    uint8_t base_tile;
-
-    switch (game.dir) {
-        case DIR_UP:    base_tile = SPR_TILE_PLAYER_UP; break;
-        case DIR_LEFT:
-        case DIR_RIGHT: base_tile = SPR_TILE_PLAYER_SIDE; break;
-        default:        base_tile = SPR_TILE_PLAYER_DOWN; break;
-    }
-
-    /* 2x2 meta-sprite using OAM sprites 0-3 */
-    set_sprite_tile(0, base_tile);
-    set_sprite_tile(1, base_tile + 1);
-    set_sprite_tile(2, base_tile + 2);
-    set_sprite_tile(3, base_tile + 3);
-
-    /* Set sprite properties (flip for left-facing) */
-    if (game.dir == DIR_LEFT) {
-        set_sprite_prop(0, S_FLIPX);
-        set_sprite_prop(1, S_FLIPX);
-        set_sprite_prop(2, S_FLIPX);
-        set_sprite_prop(3, S_FLIPX);
-        /* Swap left/right tiles for proper mirroring */
-        set_sprite_tile(0, base_tile + 1);
-        set_sprite_tile(1, base_tile);
-        set_sprite_tile(2, base_tile + 3);
-        set_sprite_tile(3, base_tile + 2);
-    } else {
-        set_sprite_prop(0, 0);
-        set_sprite_prop(1, 0);
-        set_sprite_prop(2, 0);
-        set_sprite_prop(3, 0);
-    }
-}
-
-/* ── Hide player sprite ────────────────────────────────────── */
-void world_hide_player(void) {
-    move_sprite(0, 0, 0);
-    move_sprite(1, 0, 0);
-    move_sprite(2, 0, 0);
-    move_sprite(3, 0, 0);
-}
-
-/* ── Update player movement, returns tile stepped onto ─────── */
-uint8_t world_update(void) {
-    uint8_t pressed = ui_poll_keys();
-    uint8_t nx = game.px, ny = game.py;
-    uint8_t max_x, max_y;
-    uint8_t dest_tile;
-    uint8_t screen_x, screen_y;
-
-    if (game.in_gym) {
-        max_x = SCREEN_W - 1;
-        max_y = SCREEN_H - 1;
-    } else {
-        max_x = MAP_W - 1;
-        max_y = MAP_H - 1;
-    }
-
-    if (pressed & J_UP) {
-        game.dir = DIR_UP;
-        if (ny > 1) ny--;
-    } else if (pressed & J_DOWN) {
-        game.dir = DIR_DOWN;
-        if (ny < max_y - 1) ny++;
-    } else if (pressed & J_LEFT) {
-        game.dir = DIR_LEFT;
-        if (nx > 1) nx--;
-    } else if (pressed & J_RIGHT) {
-        game.dir = DIR_RIGHT;
-        if (nx < max_x - 1) nx++;
-    } else if (pressed & J_START) {
-        return 0xFE; /* menu request */
-    }
-
-    if (nx == game.px && ny == game.py) return 0xFF; /* no movement */
-
-    /* Collision check */
-    if (game.in_gym) {
-        dest_tile = game.zone.gym_map[ny][nx];
-    } else {
-        dest_tile = game.zone.map[ny][nx];
-    }
-
-    if (dest_tile == TILE_WALL || dest_tile == TILE_ROCK ||
-        dest_tile == TILE_WATER) {
-        return 0xFF; /* blocked */
+    /* Check walkability */
+    if (!is_walkable(tile)) {
+        return 0;
     }
 
     /* Move player */
-    game.px = nx;
-    game.py = ny;
-
-    /* Update camera */
-    update_camera();
-    SCX_REG = cam_x;
-    SCY_REG = cam_y;
+    save.player_x = new_x;
+    save.player_y = new_y;
 
     /* Update sprite position */
-    world_show_player();
-    screen_x = game.px * 8 - cam_x + 8;
-    screen_y = game.py * 8 - cam_y + 16;
+    move_sprite(SPR_PLAYER,     (save.player_x * 8) + 8, (save.player_y * 8) + 16);
+    move_sprite(SPR_PLAYER + 1, (save.player_x * 8) + 16, (save.player_y * 8) + 16);
+    move_sprite(SPR_PLAYER + 2, (save.player_x * 8) + 8, (save.player_y * 8) + 24);
+    move_sprite(SPR_PLAYER + 3, (save.player_x * 8) + 16, (save.player_y * 8) + 24);
 
-    /* 2x2 meta-sprite positioning */
-    move_sprite(0, screen_x,     screen_y);
-    move_sprite(1, screen_x + 8, screen_y);
-    move_sprite(2, screen_x,     screen_y + 8);
-    move_sprite(3, screen_x + 8, screen_y + 8);
+    /* Random encounter in tall grass */
+    if (tile == T_TALL) {
+        if (rng_range(1, 10) <= 3) { /* 30% encounter rate */
+            return 1;
+        }
+    }
 
-    return dest_tile;
+    return 0;
 }
 
-void world_set_tile_palettes(void) {
-    /* Palettes are set during render_map/render_gym */
+uint8_t world_get_tile(uint8_t x, uint8_t y) {
+    if (x >= MAP_W || y >= MAP_H) return T_ROCK;
+    return map_tiles[y * MAP_W + x];
+}
+
+void world_update(void) {
+    /* Animate water tiles every 32 frames */
+    if ((frame_count & 31) == 0) {
+        uint16_t i;
+        for (i = 0; i < MAP_W * MAP_H; i++) {
+            if (map_tiles[i] == T_WATER) map_tiles[i] = T_WATER2;
+            else if (map_tiles[i] == T_WATER2) map_tiles[i] = T_WATER;
+        }
+        /* Redraw only water area if present */
+        world_draw();
+    }
+}
+
+/* =========================================================
+   SHOP
+   ========================================================= */
+void world_shop(void) {
+    const char *shop_items[] = {"Potion 30g", "Elixir 80g", "Antidote 20g", "SmokeBall 15g"};
+    const uint16_t prices[] = {30, 80, 20, 15};
+    const uint8_t item_ids[] = {ITEM_POTION, ITEM_ELIXIR, ITEM_ANTIDOTE, ITEM_SMOKEBALL};
+    uint8_t choice;
+
+    ui_clear_screen();
+    ui_show_message("Welcome to", "the shop!");
+    ui_wait_button();
+
+    while (1) {
+        ui_clear_screen();
+        ui_print(1, 0, "Shop");
+        ui_print(1, 1, "Gold:");
+        ui_print_num(7, 1, save.gold, 5);
+
+        ui_draw_box(0, 3, 20, 7);
+        choice = ui_menu(1, 4, shop_items, 4);
+
+        if (choice == 0xFF) break;
+
+        if (save.gold >= prices[choice]) {
+            save.gold -= prices[choice];
+            save.items[item_ids[choice]]++;
+            ui_show_message("Bought!", "");
+        } else {
+            ui_show_message("Not enough", "gold!");
+        }
+        ui_wait_button();
+    }
 }
